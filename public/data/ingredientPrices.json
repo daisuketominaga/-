@@ -1,0 +1,23 @@
+[
+  { "id": "onion", "name": "玉ねぎ", "unitPrice": 50 },
+  { "id": "pork", "name": "豚肉", "unitPrice": 300 },
+  { "id": "chicken", "name": "鶏肉", "unitPrice": 250 },
+  { "id": "egg", "name": "卵", "unitPrice": 25 },
+  { "id": "carrot", "name": "にんじん", "unitPrice": 40 },
+  { "id": "potato", "name": "じゃがいも", "unitPrice": 30 },
+  { "id": "cabbage", "name": "キャベツ", "unitPrice": 100 },
+  { "id": "tomato", "name": "トマト", "unitPrice": 60 },
+  { "id": "rice", "name": "ごはん", "unitPrice": 20 },
+  { "id": "noodle", "name": "麺", "unitPrice": 50 },
+  { "id": "cheese", "name": "チーズ", "unitPrice": 150 },
+  { "id": "milk", "name": "牛乳", "unitPrice": 100 },
+  { "id": "flour", "name": "小麦粉", "unitPrice": 80 },
+  { "id": "broccoli", "name": "ブロッコリー", "unitPrice": 80 },
+  { "id": "green-pepper", "name": "ピーマン", "unitPrice": 40 },
+  { "id": "mushroom", "name": "しいたけ", "unitPrice": 60 },
+  { "id": "beef", "name": "牛肉", "unitPrice": 500 },
+  { "id": "fish", "name": "魚", "unitPrice": 200 },
+  { "id": "tofu", "name": "豆腐", "unitPrice": 40 },
+  { "id": "spinach", "name": "ほうれん草", "unitPrice": 100 }
+]
+
