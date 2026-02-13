@@ -3,42 +3,101 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 255, 248, 240;
-  --background-end-rgb: 255, 255, 255;
+  --bg-primary: #121212;
+  --bg-secondary: #1E1E1E;
+  --bg-tertiary: #2A2A2A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #AAAAAA;
+  --text-muted: #666666;
+  --accent: #FF4655;
+  --border: #333333;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
   min-height: 100vh;
 }
 
-/* スマホ向けのスクロール改善 */
 html {
   -webkit-overflow-scrolling: touch;
 }
 
-/* カスタムスクロールバー */
 ::-webkit-scrollbar {
   width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #FF9F1C;
+  background: var(--accent);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff8c00;
+  background: #ff5c6a;
 }
 
+/* YouTube風のカテゴリチップ */
+.category-chip {
+  @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer whitespace-nowrap;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.category-chip:hover {
+  background: var(--border);
+}
+
+.category-chip.active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+/* 記事カード */
+.article-card {
+  @apply rounded-xl overflow-hidden transition-all duration-200 cursor-pointer;
+  background: var(--bg-secondary);
+}
+
+.article-card:hover {
+  background: var(--bg-tertiary);
+  transform: translateY(-2px);
+}
+
+/* テキストの行数制限 */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 契約書のスクロール領域 */
+.charter-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.charter-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.charter-scroll::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 3px;
+}
