@@ -1,153 +1,93 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { Recipe, IngredientPrice } from '@/types';
-import RecipeCard from '@/components/RecipeCard';
-import SearchBar from '@/components/SearchBar';
-import FilterChips from '@/components/FilterChips';
-import BottomNav from '@/components/BottomNav';
-import {
-  searchRecipesByIngredients,
-  filterByAllergens,
-  filterByCookTime,
-  calculateRecipeCost,
-} from '@/utils/recipeUtils';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
-export default function Home() {
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [prices, setPrices] = useState<IngredientPrice[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
-  const [selectedMaxTime, setSelectedMaxTime] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function LandingPage() {
+  const router = useRouter();
+  const [showLogin, setShowLogin] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    // ローカルストレージからアレルギー設定を読み込む
-    const savedAllergens = localStorage.getItem('excludedAllergens');
-    if (savedAllergens) {
-      try {
-        setSelectedAllergens(JSON.parse(savedAllergens));
-      } catch (e) {
-        console.error('Failed to parse saved allergens', e);
-      }
-    }
-
-    // データを読み込む
-    Promise.all([
-      fetch('/data/recipes.json').then((res) => res.json()),
-      fetch('/data/ingredientPrices.json').then((res) => res.json()),
-    ])
-      .then(([recipesData, pricesData]) => {
-        setRecipes(recipesData);
-        setPrices(pricesData);
-        setLoading(false);
-      })
-      .catch((error) => {
-        console.error('Failed to load data', error);
-        setLoading(false);
-      });
-  }, []);
-
-  // アレルギー設定を保存
-  useEffect(() => {
-    localStorage.setItem('excludedAllergens', JSON.stringify(selectedAllergens));
-  }, [selectedAllergens]);
-
-  const filteredRecipes = useMemo(() => {
-    let filtered = recipes;
-
-    // 食材検索
-    if (searchQuery.trim()) {
-      filtered = searchRecipesByIngredients(filtered, searchQuery);
-    }
-
-    // アレルギーでフィルタリング
-    filtered = filterByAllergens(filtered, selectedAllergens);
-
-    // 調理時間でフィルタリング
-    filtered = filterByCookTime(filtered, selectedMaxTime);
-
-    return filtered;
-  }, [recipes, searchQuery, selectedAllergens, selectedMaxTime]);
-
-  const handleAllergenToggle = (allergen: string) => {
-    setSelectedAllergens((prev) =>
-      prev.includes(allergen)
-        ? prev.filter((a) => a !== allergen)
-        : [...prev, allergen]
-    );
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    // MVP: パスワードチェックなしでダッシュボードへ遷移
+    // Supabase認証は本番環境で設定
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 500);
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🍳</div>
-          <p className="text-gray-600">読み込み中...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen pb-20 bg-background-light">
-      <div className="max-w-md mx-auto px-4 py-6">
-        {/* ヘッダー */}
-        <header className="mb-6">
-          <h1 className="text-3xl font-bold text-primary-orange mb-2">
-            EasyCook Kids
+    <div className="min-h-screen flex flex-col items-center justify-center px-4">
+      <div className="max-w-md w-full text-center">
+        {/* ロゴ・ブランド */}
+        <div className="mb-12">
+          <div className="w-20 h-20 bg-brand-navy rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+            <span className="text-white text-3xl font-bold">一</span>
+          </div>
+          <h1 className="text-3xl font-bold text-brand-navy mb-3">
+            ライフデザイン面談
           </h1>
-          <p className="text-gray-600 text-sm">
-            食材を選んで、子供が喜ぶレシピを見つけよう！
+          <p className="text-text-secondary text-lg leading-relaxed">
+            物件を探す前に、人生を探す。
           </p>
-        </header>
-
-        {/* 検索バー */}
-        <div className="mb-6">
-          <SearchBar onSearch={setSearchQuery} />
+          <p className="text-text-muted text-sm mt-2">
+            株式会社イチエン不動産
+          </p>
         </div>
 
-        {/* フィルターチップ */}
-        <div className="mb-6">
-          <FilterChips
-            selectedAllergens={selectedAllergens}
-            onAllergenToggle={handleAllergenToggle}
-            selectedMaxTime={selectedMaxTime}
-            onTimeSelect={setSelectedMaxTime}
-          />
-        </div>
-
-        {/* レシピ一覧 */}
-        <div>
-          {filteredRecipes.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-6xl mb-4">🔍</div>
-              <p className="text-gray-600 mb-2">レシピが見つかりませんでした</p>
-              <p className="text-sm text-gray-500">
-                別の食材や条件で検索してみてください
-              </p>
+        {!showLogin ? (
+          <div className="space-y-4">
+            <button
+              onClick={() => setShowLogin(true)}
+              className="w-full bg-brand-navy text-white py-4 px-6 rounded-xl text-lg font-medium hover:bg-brand-navy-light transition-colors shadow-md"
+            >
+              スタッフログイン
+            </button>
+            <p className="text-text-muted text-sm">
+              お客様は面談時にQRコードからアクセスしてください
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="メールアドレス"
+                className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-brand-navy focus:outline-none text-lg"
+              />
             </div>
-          ) : (
-            <>
-              <p className="text-sm text-gray-600 mb-4">
-                {filteredRecipes.length}件のレシピが見つかりました
-              </p>
-              <div className="grid grid-cols-1 gap-4">
-                {filteredRecipes.map((recipe) => (
-                  <RecipeCard
-                    key={recipe.id}
-                    recipe={recipe}
-                    totalCost={calculateRecipeCost(recipe, prices)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+            <div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="パスワード"
+                className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-brand-navy focus:outline-none text-lg"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-brand-navy text-white py-4 px-6 rounded-xl text-lg font-medium hover:bg-brand-navy-light transition-colors shadow-md disabled:opacity-50"
+            >
+              {loading ? "ログイン中..." : "ログイン"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowLogin(false)}
+              className="text-text-muted text-sm hover:text-text-secondary"
+            >
+              戻る
+            </button>
+          </form>
+        )}
       </div>
-
-      <BottomNav />
     </div>
   );
 }
-

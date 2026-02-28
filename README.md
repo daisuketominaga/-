@@ -1,22 +1,26 @@
-# EasyCook Kids
+# ライフデザイン面談アプリ
 
-毎日の献立作りを面倒に感じる母親のために、手持ちの食材から子供が喜ぶ料理を提案するWebアプリです。
+**「物件を探す前に、人生を探す。」**
 
-## 特徴
+不動産購入を検討しているお客さんに対して、物件紹介の前段階で「自分の人生の価値観」を一緒に探る面談体験を提供するWebアプリ。面談の結果をAIが分析し、その人だけの「提案レター」を生成します。
 
-- 🍳 **シンプルな検索**: 食材を入力するだけでレシピを検索
-- 💰 **概算費用表示**: 各レシピの概算費用が一目でわかる
-- ⏱️ **調理時間フィルター**: 時間に合わせてレシピを絞り込み
-- 🚫 **アレルギー対応**: アレルギー物質を除外して検索
-- ❤️ **お気に入り機能**: 気に入ったレシピを保存
-- 📱 **スマホ最適化**: スマートフォンのブラウザで快適に使用可能
+## 主な機能
+
+- **2台同期モード**: スタッフ用（スマホ/PC）とお客さん用（iPad）の2画面をリアルタイム同期
+- **価値観ワーク**: 5ステップの対話型ワーク（スライダー・選択・自由記述）
+- **AI面談アシスト**: 面談中にスタッフ画面にAIが問いかけを提案
+- **価値観マップ**: レーダーチャート＋キーワードクラウドで価値観を可視化
+- **提案レター自動生成**: AIが面談内容をもとに提案レターを下書き
+- **PDF/印刷出力**: レターヘッド付きの提案レターを出力
 
 ## 技術スタック
 
-- **フレームワーク**: Next.js 14+ (App Router)
-- **言語**: TypeScript (Strictモード)
-- **スタイリング**: Tailwind CSS
-- **状態管理**: React Hooks + localStorage
+- **フロントエンド**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **チャート**: Recharts（レーダーチャート）
+- **アニメーション**: Framer Motion
+- **データベース**: Supabase（PostgreSQL + Realtime + 認証）
+- **AI**: Anthropic Claude API
+- **デプロイ**: Vercel
 
 ## セットアップ
 
@@ -25,41 +29,38 @@
 npm install
 ```
 
-2. 開発サーバーの起動:
+2. 環境変数の設定:
+```bash
+cp .env.example .env.local
+```
+`.env.local` に以下の値を設定:
+- `NEXT_PUBLIC_SUPABASE_URL` - Supabase プロジェクト URL
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase Anon Key
+- `ANTHROPIC_API_KEY` - Claude API キー
+- `NEXT_PUBLIC_APP_URL` - アプリの公開URL
+
+3. 開発サーバーの起動:
 ```bash
 npm run dev
 ```
 
-3. ブラウザで `http://localhost:3000` を開く
+4. ブラウザで `http://localhost:3000` を開く
 
-## プロジェクト構造
+> **Note**: Supabase/Claude APIの設定がなくてもローカルストレージモードで動作します。
 
-```
-├── app/                    # Next.js App Router
-│   ├── page.tsx           # ホーム画面
-│   ├── favorites/         # お気に入り画面
-│   ├── settings/          # 設定画面
-│   └── recipes/[id]/      # レシピ詳細画面
-├── components/            # Reactコンポーネント
-│   ├── BottomNav.tsx     # 下部ナビゲーション
-│   ├── RecipeCard.tsx    # レシピカード
-│   ├── SearchBar.tsx     # 検索バー
-│   └── FilterChips.tsx   # フィルターチップ
-├── data/                  # モックデータ（開発用）
-├── public/data/           # 静的データファイル
-├── types/                 # TypeScript型定義
-└── utils/                 # ユーティリティ関数
-```
+## データベースセットアップ
 
-## 使用方法
+Supabaseを使用する場合、`supabase/schema.sql` のSQLをSupabase SQL Editorで実行してください。
 
-1. **レシピ検索**: ホーム画面で食材名を入力（例：「豚肉, 玉ねぎ」）
-2. **フィルター**: アレルギー物質や調理時間で絞り込み
-3. **レシピ詳細**: カードをタップして詳細を確認
-4. **お気に入り**: レシピ詳細画面で❤️をタップして保存
-5. **設定**: アレルギー設定を変更
+## 画面構成
 
-## ライセンス
+### スタッフ用画面
+- `/` - ログイン
+- `/dashboard` - 顧客一覧・面談管理
+- `/session/new` - 新規面談セットアップ（QRコード生成）
+- `/s/{sessionId}/staff` - 面談進行画面（メモ入力・AI提案）
+- `/s/{sessionId}/review` - AI分析レビュー・レター編集
+- `/s/{sessionId}/letter` - 提案レター出力
 
-MIT
-
+### お客さん用画面
+- `/s/{sessionId}/client` - ウェルカム → 価値観ワーク → 価値観マップ
