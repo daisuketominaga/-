@@ -1,44 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 255, 248, 240;
-  --background-end-rgb: 255, 255, 255;
+  --color-primary: #FF7A45;
+  --color-coral: #FF6B6B;
+  --color-teal: #2EC4B6;
+  --color-cream: #FFF5EB;
+  --color-text: #3D3D3D;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  color: var(--color-text);
+  background: var(--color-cream);
   min-height: 100vh;
+  font-family: "Noto Sans JP", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* スマホ向けのスクロール改善 */
 html {
   -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
 }
 
-/* カスタムスクロールバー */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #FF9F1C;
-  border-radius: 4px;
+  background: #FF7A45;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff8c00;
+  background: #ff6030;
 }
 
+@layer components {
+  .btn-primary {
+    @apply bg-primary-orange text-white font-medium px-6 py-3 rounded-2xl shadow-button hover:brightness-105 active:scale-95 transition-all duration-200;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-primary-orange border-2 border-primary-orange font-medium px-6 py-3 rounded-2xl hover:bg-secondary-cream active:scale-95 transition-all duration-200;
+  }
+
+  .btn-teal {
+    @apply bg-accent-teal text-white font-medium px-6 py-3 rounded-2xl hover:brightness-105 active:scale-95 transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-white rounded-3xl shadow-card p-6;
+  }
+
+  .card-soft {
+    @apply bg-white/80 backdrop-blur-sm rounded-3xl shadow-soft p-5;
+  }
+
+  .input-field {
+    @apply w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-text-dark focus:border-primary-orange focus:outline-none focus:ring-2 focus:ring-primary-orange/20 transition-all;
+  }
+
+  .label-text {
+    @apply text-sm font-medium text-text-medium mb-1 block;
+  }
+}
