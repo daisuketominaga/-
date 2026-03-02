@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EasyCook Kids - 子供が喜ぶレシピ検索",
-  description: "手持ちの食材から子供が喜ぶ料理を提案するWebアプリ",
+  title: "イチエン不動産 CRM",
+  description: "株式会社イチエン不動産 顧客管理システム",
 };
 
 export const viewport: Viewport = {
@@ -19,10 +19,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body className="antialiased">
-        {children}
-      </body>
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="antialiased font-sans">{children}</body>
     </html>
   );
 }
-

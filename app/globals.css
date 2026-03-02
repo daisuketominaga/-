@@ -2,43 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 255, 248, 240;
-  --background-end-rgb: 255, 255, 255;
-}
-
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
-  min-height: 100vh;
-}
-
-/* スマホ向けのスクロール改善 */
 html {
   -webkit-overflow-scrolling: touch;
 }
 
-/* カスタムスクロールバー */
+body {
+  color: #1a1a1a;
+  background: #f5f7fa;
+  min-height: 100vh;
+  font-size: 16px;
+}
+
+/* iOS input zoom prevention */
+input, select, textarea {
+  font-size: 16px !important;
+}
+
+/* Safe area support */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #FF9F1C;
-  border-radius: 4px;
+  background: #1E3A5F;
+  border-radius: 2px;
 }
-
-::-webkit-scrollbar-thumb:hover {
-  background: #ff8c00;
-}
-
