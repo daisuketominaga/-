@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Step1Priorities from "@/components/values-work/Step1Priorities";
 import Step2IdealDay from "@/components/values-work/Step2IdealDay";
@@ -8,13 +8,13 @@ import Step3Tradeoffs from "@/components/values-work/Step3Tradeoffs";
 import Step4Letter from "@/components/values-work/Step4Letter";
 import Step5TopValues from "@/components/values-work/Step5TopValues";
 import ValuesMapDisplay from "@/components/ValuesMapDisplay";
-import {
-  createEmptyValueWork,
-  getMockValueMap,
-} from "@/lib/mockData";
-import type { ValueWork } from "@/types";
+import { getSession, saveValueWork, saveValueMap, updateSessionStatus } from "@/lib/sessionStore";
+import { generateValueMap, generateValueKeywords } from "@/lib/mockAI";
+import { createSyncChannel } from "@/lib/syncChannel";
+import { createEmptyValueWork } from "@/lib/mockData";
+import type { ValueWork, ValueMap, Session } from "@/types";
 
-type Phase = "welcome" | "work" | "map";
+type Phase = "welcome" | "work" | "generating" | "map";
 
 export default function ClientPage({
   params,
@@ -22,29 +22,133 @@ export default function ClientPage({
   params: { sessionId: string };
 }) {
   const [phase, setPhase] = useState<Phase>("welcome");
+  const [session, setSession] = useState<Session | null>(null);
   const [valueWork, setValueWork] = useState<ValueWork>(
     createEmptyValueWork("new")
   );
   const [currentStep, setCurrentStep] = useState(1);
+  const [generatedMap, setGeneratedMap] = useState<ValueMap | null>(null);
+  const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([]);
+
+  useEffect(() => {
+    const s = getSession(params.sessionId);
+    if (s) {
+      setSession(s);
+      if (s.valueWork && s.valueWork.completedAt) {
+        setValueWork(s.valueWork);
+        if (s.valueMap) {
+          setGeneratedMap(s.valueMap);
+          setPhase("map");
+        }
+      } else if (s.valueWork && s.valueWork.currentStep > 1) {
+        setValueWork(s.valueWork);
+        setCurrentStep(s.valueWork.currentStep);
+        setPhase("work");
+      }
+    }
+  }, [params.sessionId]);
+
+  const sync = typeof window !== "undefined"
+    ? createSyncChannel(params.sessionId)
+    : null;
 
   const handleStepComplete = (step: number, data: Partial<ValueWork>) => {
-    setValueWork((prev) => ({ ...prev, ...data }));
+    const updated = { ...valueWork, ...data, currentStep: step + 1 };
+    setValueWork(updated);
+
+    saveValueWork(params.sessionId, updated);
+
+    sync?.send({
+      type: "VALUE_WORK_PROGRESS",
+      sessionId: params.sessionId,
+      data: { step, currentStep: step + 1 },
+    });
+
+    if (step === 4) {
+      const keywords = generateValueKeywords(updated);
+      setSuggestedKeywords(keywords);
+    }
+
     if (step < 5) {
       setCurrentStep(step + 1);
     } else {
-      setPhase("map");
+      setPhase("generating");
+      updateSessionStatus(params.sessionId, "分析中");
+
+      setTimeout(() => {
+        const customer = session?.customer || {
+          id: "unknown",
+          name: "お客様",
+          age: 0,
+          family: { children: [] },
+          purchasePurpose: "初めての購入" as const,
+          createdAt: new Date().toISOString(),
+          status: "面談済み" as const,
+        };
+
+        const completedWork: ValueWork = {
+          ...updated,
+          step5TopValues: data.step5TopValues || updated.step5TopValues,
+          completedAt: new Date().toISOString(),
+        };
+        saveValueWork(params.sessionId, completedWork);
+
+        const map = generateValueMap(completedWork, customer);
+        setGeneratedMap(map);
+        saveValueMap(params.sessionId, map);
+
+        sync?.send({
+          type: "VALUE_WORK_COMPLETE",
+          sessionId: params.sessionId,
+          data: { valueMap: map },
+        });
+
+        setPhase("map");
+      }, 2500);
     }
   };
 
   if (phase === "welcome") {
-    return <WelcomePage onStart={() => setPhase("work")} />;
+    return (
+      <WelcomePage
+        customerName={session?.customer.name}
+        onStart={() => {
+          setPhase("work");
+          updateSessionStatus(params.sessionId, "面談中");
+        }}
+      />
+    );
   }
 
-  if (phase === "map") {
+  if (phase === "generating") {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-secondary-cream to-white flex flex-col items-center justify-center px-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="w-16 h-16 border-4 border-primary-orange/20 border-t-primary-orange rounded-full mx-auto mb-6"
+          />
+          <h2 className="text-xl font-bold text-text-dark mb-2">
+            あなたの価値観を分析しています
+          </h2>
+          <p className="text-text-medium text-sm">
+            AIが回答をもとに価値観マップを生成中...
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (phase === "map" && generatedMap) {
     return (
       <div className="min-h-screen bg-secondary-cream">
         <ValuesMapDisplay
-          valueMap={getMockValueMap()}
+          valueMap={generatedMap}
           valueWork={valueWork}
           sessionId={params.sessionId}
         />
@@ -54,7 +158,6 @@ export default function ClientPage({
 
   return (
     <div className="min-h-screen bg-secondary-cream">
-      {/* Progress bar */}
       <div className="bg-white/90 backdrop-blur-md sticky top-0 z-50 px-4 py-3 border-b border-gray-100">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-2">
@@ -76,7 +179,6 @@ export default function ClientPage({
         </div>
       </div>
 
-      {/* Step content */}
       <div className="max-w-2xl mx-auto px-4 py-6">
         <AnimatePresence mode="wait">
           <motion.div
@@ -122,6 +224,7 @@ export default function ClientPage({
             {currentStep === 5 && (
               <Step5TopValues
                 data={valueWork.step5TopValues}
+                suggestedKeywords={suggestedKeywords}
                 onComplete={(data) =>
                   handleStepComplete(5, {
                     step5TopValues: data as [string, string, string],
@@ -144,7 +247,13 @@ const stepLabels = [
   "大切にしたいこと",
 ];
 
-function WelcomePage({ onStart }: { onStart: () => void }) {
+function WelcomePage({
+  customerName,
+  onStart,
+}: {
+  customerName?: string;
+  onStart: () => void;
+}) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-secondary-cream to-white flex flex-col items-center justify-center px-6">
       <motion.div
@@ -156,6 +265,11 @@ function WelcomePage({ onStart }: { onStart: () => void }) {
         <div className="w-20 h-20 bg-primary-orange rounded-3xl flex items-center justify-center text-white font-display font-bold text-3xl mx-auto mb-6 shadow-button">
           1¥
         </div>
+        {customerName && (
+          <p className="text-text-medium text-sm mb-2">
+            {customerName} 様
+          </p>
+        )}
         <h1 className="text-3xl font-bold text-text-dark mb-3 leading-tight">
           あなたの
           <br />

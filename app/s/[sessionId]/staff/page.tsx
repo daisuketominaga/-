@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import StaffNav from "@/components/StaffNav";
 import ValuesMapDisplay from "@/components/ValuesMapDisplay";
-import { getSession } from "@/lib/mockData";
-import type { InterviewNote, AISuggestion } from "@/types";
+import { getSession, saveInterviewNotes, saveProposalLetter } from "@/lib/sessionStore";
+import { generateAISuggestions, generateEmotionSignals, generateProposalLetter } from "@/lib/mockAI";
+import { createSyncChannel } from "@/lib/syncChannel";
+import type { Session, InterviewNote, AISuggestion } from "@/types";
 
 const categoryColors: Record<string, string> = {
   暮らしの情景: "bg-blue-100 text-blue-700",
@@ -41,25 +43,50 @@ export default function StaffInterviewPage({
 }: {
   params: { sessionId: string };
 }) {
-  const session = getSession(params.sessionId);
-  const [notes, setNotes] = useState<InterviewNote[]>(
-    session?.interview?.notes || []
-  );
+  const [session, setSession] = useState<Session | null>(null);
+  const [notes, setNotes] = useState<InterviewNote[]>([]);
   const [newNote, setNewNote] = useState("");
   const [noteCategory, setNoteCategory] = useState<InterviewNote["category"]>(
     "暮らしの情景"
   );
-  const [suggestions, setSuggestions] = useState<AISuggestion[]>(
-    session?.interview?.aiSuggestions || defaultSuggestions
-  );
-  const [activeTab, setActiveTab] = useState<"notes" | "map" | "letter">(
-    "notes"
-  );
-  const [emotionSignals] = useState([
-    { icon: "🔥", message: "「子どもの笑い声」で回答が長くなっています" },
-    { icon: "💭", message: "「資産価値 vs 好み」の選択で迷いが見られます" },
-    { icon: "✨", message: "Step 4の手紙を書き始めました" },
+  const [suggestions, setSuggestions] = useState<AISuggestion[]>(defaultSuggestions);
+  const [usedQuestions, setUsedQuestions] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"notes" | "map" | "letter">("notes");
+  const [emotionSignals, setEmotionSignals] = useState<{ icon: string; message: string }[]>([
+    { icon: "👀", message: "お客さんのワーク開始を待っています..." },
   ]);
+  const [clientStep, setClientStep] = useState(0);
+  const [isGeneratingLetter, setIsGeneratingLetter] = useState(false);
+
+  const refreshSession = useCallback(() => {
+    const s = getSession(params.sessionId);
+    if (s) {
+      setSession(s);
+      if (s.interview?.notes) setNotes(s.interview.notes);
+      if (s.interview?.aiSuggestions) setSuggestions(s.interview.aiSuggestions);
+      if (s.valueWork) {
+        setEmotionSignals(generateEmotionSignals(s.valueWork));
+        setClientStep(s.valueWork.currentStep);
+      }
+    }
+  }, [params.sessionId]);
+
+  useEffect(() => {
+    refreshSession();
+  }, [refreshSession]);
+
+  useEffect(() => {
+    const sync = createSyncChannel(params.sessionId);
+    const unsubscribe = sync.onMessage((msg) => {
+      if (msg.type === "VALUE_WORK_PROGRESS" || msg.type === "VALUE_WORK_COMPLETE" || msg.type === "VALUE_MAP_READY") {
+        refreshSession();
+      }
+    });
+    return () => {
+      unsubscribe();
+      sync.close();
+    };
+  }, [params.sessionId, refreshSession]);
 
   const customerName = session?.customer.name || "お客様";
 
@@ -70,44 +97,43 @@ export default function StaffInterviewPage({
       content: newNote,
       category: noteCategory,
     };
-    setNotes([...notes, note]);
+    const updatedNotes = [...notes, note];
+    setNotes(updatedNotes);
     setNewNote("");
+    saveInterviewNotes(params.sessionId, updatedNotes);
 
-    // Simulate AI generating new suggestions
-    const newSuggestions: AISuggestion[] = [
-      {
-        timestamp: new Date().toISOString(),
-        question: "人生で一番「家」を感じた瞬間はいつですか？",
-        category: "隠れた価値観",
-        used: false,
-      },
-      {
-        timestamp: new Date().toISOString(),
-        question: "10年後の家族の風景を想像してみてください。何が見えますか？",
-        category: "家族の未来",
-        used: false,
-      },
-      {
-        timestamp: new Date().toISOString(),
-        question: "理想の休日の朝はどんな朝ですか？",
-        category: "暮らしの情景",
-        used: false,
-      },
-    ];
+    const newUsed = [...usedQuestions];
+    const newSuggestions = generateAISuggestions(newUsed);
     setSuggestions(newSuggestions);
   };
 
   const markSuggestionUsed = (index: number) => {
+    const question = suggestions[index].question;
+    setUsedQuestions((prev) => [...prev, question]);
     setSuggestions((prev) =>
       prev.map((s, i) => (i === index ? { ...s, used: true } : s))
     );
+  };
+
+  const handleGenerateLetter = () => {
+    if (!session?.valueMap || !session?.customer) return;
+    setIsGeneratingLetter(true);
+    setTimeout(() => {
+      const letter = generateProposalLetter(
+        session.customer,
+        session.valueMap!,
+        notes
+      );
+      saveProposalLetter(params.sessionId, letter);
+      refreshSession();
+      setIsGeneratingLetter(false);
+    }, 1500);
   };
 
   return (
     <div className="min-h-screen bg-secondary-cream">
       <StaffNav />
       <main className="max-w-3xl mx-auto px-4 py-4">
-        {/* ヘッダー */}
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-lg font-bold text-text-dark">
@@ -117,14 +143,23 @@ export default function StaffInterviewPage({
               セッション: {params.sessionId}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {clientStep > 0 && clientStep <= 5 && (
+              <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-1 rounded-full font-medium">
+                Step {clientStep}/5
+              </span>
+            )}
+            {clientStep > 5 && (
+              <span className="bg-green-100 text-green-700 text-xs px-2.5 py-1 rounded-full font-medium">
+                ワーク完了
+              </span>
+            )}
             <span className="bg-green-100 text-green-700 text-xs px-2.5 py-1 rounded-full font-medium">
               同期中
             </span>
           </div>
         </div>
 
-        {/* タブ */}
         <div className="flex gap-1 mb-4 bg-white rounded-xl p-1">
           {(["notes", "map", "letter"] as const).map((tab) => (
             <button
@@ -149,7 +184,6 @@ export default function StaffInterviewPage({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              {/* 感情シグナル */}
               <div className="card-soft mb-4">
                 <h3 className="text-xs font-bold text-text-medium mb-2">
                   感情シグナル
@@ -167,7 +201,6 @@ export default function StaffInterviewPage({
                 </div>
               </div>
 
-              {/* AI問いかけ提案 */}
               <div className="card mb-4">
                 <h3 className="font-bold text-text-dark text-sm mb-3">
                   AIの問いかけ提案
@@ -205,7 +238,6 @@ export default function StaffInterviewPage({
                 </div>
               </div>
 
-              {/* メモ入力 */}
               <div className="card mb-4">
                 <h3 className="font-bold text-text-dark text-sm mb-3">
                   面談メモ
@@ -249,7 +281,6 @@ export default function StaffInterviewPage({
                 </button>
               </div>
 
-              {/* メモ一覧 */}
               {notes.length > 0 && (
                 <div className="card">
                   <h3 className="font-bold text-text-dark text-sm mb-3">
@@ -300,9 +331,14 @@ export default function StaffInterviewPage({
               ) : (
                 <div className="card text-center py-12">
                   <div className="text-4xl mb-3">🗺️</div>
-                  <p className="text-text-medium text-sm">
+                  <p className="text-text-medium text-sm mb-2">
                     価値観ワークが完了すると、マップが表示されます
                   </p>
+                  {clientStep > 0 && clientStep <= 5 && (
+                    <p className="text-xs text-accent-teal">
+                      お客さんは現在 Step {clientStep} に取り組んでいます
+                    </p>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -331,6 +367,31 @@ export default function StaffInterviewPage({
                   >
                     レターを編集・送付する
                   </Link>
+                </div>
+              ) : session?.valueMap ? (
+                <div className="card text-center py-12">
+                  <div className="text-4xl mb-3">📝</div>
+                  <p className="text-text-medium text-sm mb-4">
+                    価値観マップをもとにAIがレターを生成します
+                  </p>
+                  <button
+                    onClick={handleGenerateLetter}
+                    disabled={isGeneratingLetter}
+                    className="btn-primary"
+                  >
+                    {isGeneratingLetter ? (
+                      <span className="flex items-center gap-2">
+                        <motion.span
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                        />
+                        生成中...
+                      </span>
+                    ) : (
+                      "レターを生成する"
+                    )}
+                  </button>
                 </div>
               ) : (
                 <div className="card text-center py-12">

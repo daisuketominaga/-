@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import StaffNav from "@/components/StaffNav";
-import { getSession } from "@/lib/mockData";
+import { getSession, saveProposalLetter, markLetterSent } from "@/lib/sessionStore";
+import type { Session } from "@/types";
 
 export default function LetterPage({
   params,
@@ -12,19 +13,25 @@ export default function LetterPage({
   params: { sessionId: string };
 }) {
   const router = useRouter();
-  const session = getSession(params.sessionId);
+  const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
+    setSession(getSession(params.sessionId) || null);
+  }, [params.sessionId]);
+
   const letter = session?.proposalLetter;
 
-  const [editedContent, setEditedContent] = useState(
-    letter?.editedContent || letter?.aiDraft || ""
-  );
-  const [personalNote, setPersonalNote] = useState(
-    letter?.personalNote || ""
-  );
-  const [sentStatus, setSentStatus] = useState<
-    "editing" | "preview" | "sent"
-  >("editing");
+  const [editedContent, setEditedContent] = useState("");
+  const [personalNote, setPersonalNote] = useState("");
+  const [sentStatus, setSentStatus] = useState<"editing" | "preview" | "sent">("editing");
   const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (letter) {
+      setEditedContent(letter.editedContent || letter.aiDraft || "");
+      setPersonalNote(letter.personalNote || "");
+    }
+  }, [letter]);
 
   const toggleFormat = (format: string) => {
     setSelectedFormats((prev) =>
@@ -34,7 +41,22 @@ export default function LetterPage({
     );
   };
 
+  const handleSave = () => {
+    if (!session?.proposalLetter) return;
+    saveProposalLetter(params.sessionId, {
+      ...session.proposalLetter,
+      editedContent,
+      personalNote,
+    });
+  };
+
   const handleSend = () => {
+    handleSave();
+    markLetterSent(params.sessionId, selectedFormats.join("・"));
+
+    if (selectedFormats.includes("pdf")) {
+      setTimeout(() => window.print(), 300);
+    }
     setSentStatus("sent");
   };
 
@@ -78,9 +100,11 @@ export default function LetterPage({
 
   return (
     <div className="min-h-screen bg-secondary-cream">
-      <StaffNav />
+      <div className="no-print">
+        <StaffNav />
+      </div>
       <main className="max-w-3xl mx-auto px-4 py-6">
-        <div className="mb-6">
+        <div className="mb-6 no-print">
           <h1 className="text-xl font-bold text-text-dark mb-1">
             提案レター — {session?.customer.name} 様
           </h1>
@@ -89,8 +113,7 @@ export default function LetterPage({
           </p>
         </div>
 
-        {/* プレビュー / 編集 切り替え */}
-        <div className="flex gap-1 mb-4 bg-white rounded-xl p-1">
+        <div className="flex gap-1 mb-4 bg-white rounded-xl p-1 no-print">
           <button
             onClick={() => setSentStatus("editing")}
             className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -102,7 +125,7 @@ export default function LetterPage({
             編集
           </button>
           <button
-            onClick={() => setSentStatus("preview")}
+            onClick={() => { handleSave(); setSentStatus("preview"); }}
             className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
               sentStatus === "preview"
                 ? "bg-primary-orange text-white"
@@ -114,8 +137,7 @@ export default function LetterPage({
         </div>
 
         {sentStatus === "editing" ? (
-          <div className="space-y-4">
-            {/* レター本文 */}
+          <div className="space-y-4 no-print">
             <div className="card">
               <h3 className="font-bold text-text-dark text-sm mb-3">
                 レター本文
@@ -127,7 +149,6 @@ export default function LetterPage({
               />
             </div>
 
-            {/* 個人メッセージ */}
             <div className="card">
               <h3 className="font-bold text-text-dark text-sm mb-2">
                 トミーさんの個人的メッセージ
@@ -144,10 +165,8 @@ export default function LetterPage({
             </div>
           </div>
         ) : (
-          /* プレビュー */
-          <div className="card">
-            <div className="bg-white border border-gray-200 rounded-xl p-6 md:p-8">
-              {/* レターヘッド */}
+          <div className="card" id="letter-preview">
+            <div className="bg-white border border-gray-200 rounded-xl p-6 md:p-8 print-content">
               <div className="flex items-center justify-between mb-8 pb-4 border-b border-gray-200">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 bg-primary-orange rounded-lg flex items-center justify-center text-white font-display font-bold text-xs">
@@ -167,12 +186,10 @@ export default function LetterPage({
                 </div>
               </div>
 
-              {/* 本文 */}
               <div className="text-sm text-text-dark leading-relaxed whitespace-pre-line mb-8">
                 {editedContent}
               </div>
 
-              {/* 個人メッセージ */}
               {personalNote && (
                 <div className="bg-secondary-cream rounded-xl p-4 mb-6">
                   <p className="text-sm text-text-dark leading-relaxed whitespace-pre-line">
@@ -189,8 +206,7 @@ export default function LetterPage({
           </div>
         )}
 
-        {/* 送付オプション */}
-        <div className="card mt-4">
+        <div className="card mt-4 no-print">
           <h3 className="font-bold text-text-dark text-sm mb-3">
             送付方法を選択
           </h3>

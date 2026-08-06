@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { QRCodeSVG } from "qrcode.react";
 import StaffNav from "@/components/StaffNav";
+import { createSession } from "@/lib/sessionStore";
 
 export default function NewInterviewPage() {
   const router = useRouter();
@@ -19,8 +21,10 @@ export default function NewInterviewPage() {
     preferredArea: "",
     isPairMode: false,
   });
-  const [sessionCreated, setSessionCreated] = useState(false);
-  const [sessionId] = useState(() => `s-${Date.now()}`);
+  const [createdSession, setCreatedSession] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const handleChildrenCountChange = (count: number) => {
     const children = Array.from({ length: count }, (_, i) => ({
@@ -32,14 +36,29 @@ export default function NewInterviewPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSessionCreated(true);
+    const session = createSession({
+      name: formData.name,
+      age: parseInt(formData.age) || 0,
+      spouseName: formData.spouseName || undefined,
+      spouseAge: formData.spouseAge ? parseInt(formData.spouseAge) : undefined,
+      children: formData.children
+        .filter((c) => c.name)
+        .map((c) => ({ name: c.name, age: parseInt(c.age) || 0 })),
+      purchasePurpose: formData.purchasePurpose,
+      budgetMin: formData.budgetMin ? parseInt(formData.budgetMin) : undefined,
+      budgetMax: formData.budgetMax ? parseInt(formData.budgetMax) : undefined,
+      preferredArea: formData.preferredArea || undefined,
+      isPairMode: formData.isPairMode,
+    });
+    setCreatedSession({ id: session.id, name: formData.name });
   };
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-  const staffUrl = `${baseUrl}/s/${sessionId}/staff`;
-  const clientUrl = `${baseUrl}/s/${sessionId}/client`;
 
-  if (sessionCreated) {
+  if (createdSession) {
+    const staffUrl = `${baseUrl}/s/${createdSession.id}/staff`;
+    const clientUrl = `${baseUrl}/s/${createdSession.id}/client`;
+
     return (
       <div className="min-h-screen bg-secondary-cream">
         <StaffNav />
@@ -50,7 +69,7 @@ export default function NewInterviewPage() {
               面談セッションを作成しました
             </h2>
             <p className="text-text-medium text-sm mb-1">
-              {formData.name} 様
+              {createdSession.name} 様
             </p>
             {formData.isPairMode && (
               <span className="inline-block bg-accent-teal/10 text-accent-teal text-xs font-medium px-3 py-1 rounded-full">
@@ -65,17 +84,21 @@ export default function NewInterviewPage() {
               お客さん用QRコード
             </h3>
             <div className="bg-white rounded-2xl p-6 flex flex-col items-center border-2 border-dashed border-gray-200">
-              <div className="w-48 h-48 bg-gray-100 rounded-xl flex items-center justify-center mb-3">
-                <div className="text-center">
-                  <div className="text-4xl mb-2">📱</div>
-                  <p className="text-xs text-text-light">QRコード</p>
-                  <p className="text-[10px] text-text-light mt-1 break-all px-2">
-                    {clientUrl}
-                  </p>
-                </div>
+              <div className="mb-3">
+                <QRCodeSVG
+                  value={clientUrl}
+                  size={192}
+                  fgColor="#FF7A45"
+                  bgColor="#FFFFFF"
+                  level="M"
+                  includeMargin
+                />
               </div>
               <p className="text-xs text-text-light text-center">
                 iPadでこのQRコードを読み取ってください
+              </p>
+              <p className="text-[10px] text-text-light mt-1 break-all px-2 text-center">
+                {clientUrl}
               </p>
             </div>
           </div>
@@ -121,7 +144,7 @@ export default function NewInterviewPage() {
           {/* アクションボタン */}
           <div className="space-y-3">
             <button
-              onClick={() => router.push(`/s/${sessionId}/staff`)}
+              onClick={() => router.push(`/s/${createdSession.id}/staff`)}
               className="btn-primary w-full text-center"
             >
               面談を開始する

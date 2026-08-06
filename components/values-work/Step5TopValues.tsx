@@ -5,10 +5,11 @@ import { motion, Reorder } from "framer-motion";
 
 interface Props {
   data: string[];
+  suggestedKeywords?: string[];
   onComplete: (data: string[]) => void;
 }
 
-const suggestedValues = [
+const fallbackValues = [
   "子どもの笑い声が響く暮らし",
   "自然を感じる毎日",
   "家族の温かい食卓",
@@ -19,7 +20,11 @@ const suggestedValues = [
   "将来の安心感",
 ];
 
-export default function Step5TopValues({ data, onComplete }: Props) {
+export default function Step5TopValues({ data, suggestedKeywords, onComplete }: Props) {
+  const values = suggestedKeywords && suggestedKeywords.length >= 6
+    ? suggestedKeywords
+    : fallbackValues;
+
   const [selected, setSelected] = useState<string[]>(
     data.length > 0 ? [...data] : []
   );
@@ -46,13 +51,12 @@ export default function Step5TopValues({ data, onComplete }: Props) {
         </p>
       </div>
 
-      {/* 選択エリア */}
       <div className="mb-6">
         <p className="label-text mb-2">
           キーワードを3つ選んでください（{selected.length}/3）
         </p>
         <div className="grid grid-cols-2 gap-2">
-          {suggestedValues.map((value, index) => {
+          {values.map((value, index) => {
             const isSelected = selected.includes(value);
             const rank = selected.indexOf(value) + 1;
             return (
@@ -83,7 +87,6 @@ export default function Step5TopValues({ data, onComplete }: Props) {
         </div>
       </div>
 
-      {/* 順位表示 */}
       {selected.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -111,7 +114,7 @@ export default function Step5TopValues({ data, onComplete }: Props) {
                 <span className="text-sm font-medium text-text-dark">
                   {value}
                 </span>
-                <span className="ml-auto text-text-light text-xs">⠿</span>
+                <span className="ml-auto text-text-light text-xs">&#x2807;</span>
               </Reorder.Item>
             ))}
           </Reorder.Group>

@@ -70,3 +70,34 @@ html {
     @apply text-sm font-medium text-text-medium mb-1 block;
   }
 }
+
+@media print {
+  .no-print,
+  header,
+  nav,
+  button,
+  .btn-primary,
+  .btn-secondary {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: #3D3D3D !important;
+  }
+
+  .print-content {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 2cm !important;
+  }
+
+  .card {
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  @page {
+    margin: 1.5cm;
+  }
+}

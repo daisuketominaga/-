@@ -1,15 +1,23 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import ValuesMapDisplay from "@/components/ValuesMapDisplay";
-import { getSession } from "@/lib/mockData";
+import { getSession } from "@/lib/sessionStore";
+import type { Session } from "@/types";
 
 export default function ResultPage({
   params,
 }: {
   params: { sessionId: string };
 }) {
-  const session = getSession(params.sessionId);
+  const [session, setSession] = useState<Session | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  useEffect(() => {
+    setSession(getSession(params.sessionId) || null);
+  }, [params.sessionId]);
 
   if (!session || !session.valueMap) {
     return (
@@ -29,7 +37,6 @@ export default function ResultPage({
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-secondary-cream to-white">
-      {/* ヘッダー */}
       <header className="bg-white/90 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-2">
           <div className="w-8 h-8 bg-primary-orange rounded-lg flex items-center justify-center text-white font-display font-bold text-xs">
@@ -47,7 +54,6 @@ export default function ResultPage({
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8">
-        {/* お客さん名 */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -63,14 +69,12 @@ export default function ResultPage({
           </p>
         </motion.div>
 
-        {/* 価値観マップ */}
         <ValuesMapDisplay
           valueMap={session.valueMap}
           valueWork={session.valueWork}
           sessionId={params.sessionId}
         />
 
-        {/* 提案レター */}
         {session.proposalLetter && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -90,7 +94,6 @@ export default function ResultPage({
           </motion.div>
         )}
 
-        {/* 感想フォーム */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -103,16 +106,30 @@ export default function ResultPage({
           <p className="text-xs text-text-light text-center mb-4">
             今日の面談はいかがでしたか？一言いただけると嬉しいです。
           </p>
-          <textarea
-            className="input-field text-sm min-h-[80px] resize-none"
-            placeholder="感想を入力してください..."
-          />
-          <button className="btn-teal w-full mt-3 text-sm">
-            送信する
-          </button>
+          {feedbackSent ? (
+            <div className="text-center py-4">
+              <div className="text-3xl mb-2">🙏</div>
+              <p className="text-sm text-text-medium">ご感想ありがとうございます！</p>
+            </div>
+          ) : (
+            <>
+              <textarea
+                className="input-field text-sm min-h-[80px] resize-none"
+                placeholder="感想を入力してください..."
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+              />
+              <button
+                className="btn-teal w-full mt-3 text-sm"
+                disabled={!feedback.trim()}
+                onClick={() => setFeedbackSent(true)}
+              >
+                送信する
+              </button>
+            </>
+          )}
         </motion.div>
 
-        {/* 紹介カード */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -132,7 +149,6 @@ export default function ResultPage({
           </button>
         </motion.div>
 
-        {/* フッター */}
         <div className="text-center mt-10 mb-6">
           <p className="text-xs text-text-light">
             株式会社イチエン不動産

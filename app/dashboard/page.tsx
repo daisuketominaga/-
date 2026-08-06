@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import StaffNav from "@/components/StaffNav";
-import { getSessions } from "@/lib/mockData";
+import { getAllSessions } from "@/lib/sessionStore";
 import type { Session } from "@/types";
 
 const statusColors: Record<string, string> = {
@@ -23,7 +23,17 @@ const customerStatusColors: Record<string, string> = {
 };
 
 export default function DashboardPage() {
-  const [sessions] = useState<Session[]>(getSessions());
+  const [sessions, setSessions] = useState<Session[]>([]);
+
+  useEffect(() => {
+    setSessions(getAllSessions());
+  }, []);
+
+  useEffect(() => {
+    const onFocus = () => setSessions(getAllSessions());
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   const stats = {
     total: sessions.length,
@@ -35,7 +45,6 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-secondary-cream">
       <StaffNav />
       <main className="max-w-5xl mx-auto px-4 py-6">
-        {/* ヘッダー */}
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-text-dark mb-1">
             ダッシュボード
@@ -45,7 +54,6 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* 統計カード */}
         <div className="grid grid-cols-3 gap-3 mb-8">
           <div className="card text-center">
             <div className="text-3xl font-display font-bold text-primary-orange">
@@ -67,12 +75,10 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 新規面談ボタン */}
         <Link href="/s/new" className="btn-primary w-full block text-center mb-8 text-lg py-4">
-          ＋ 新しい面談を始める
+          + 新しい面談を始める
         </Link>
 
-        {/* セッション一覧 */}
         <div className="mb-4">
           <h2 className="text-lg font-bold text-text-dark mb-4">
             面談セッション
@@ -90,7 +96,7 @@ export default function DashboardPage() {
                       {session.customer.name}
                     </h3>
                     <p className="text-text-light text-sm">
-                      {session.customer.age}歳
+                      {session.customer.age > 0 && `${session.customer.age}歳`}
                       {session.customer.family.spouse && " / ご夫婦"}
                       {session.customer.family.children.length > 0 &&
                         ` / お子さん${session.customer.family.children.length}人`}
@@ -114,13 +120,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-text-light">
-                  <span>
-                    {session.customer.purchasePurpose}
-                  </span>
+                  <span>{session.customer.purchasePurpose}</span>
                   {session.customer.preferredArea && (
-                    <span>
-                      {session.customer.preferredArea}
-                    </span>
+                    <span>{session.customer.preferredArea}</span>
                   )}
                   {session.customer.budget && (
                     <span>
