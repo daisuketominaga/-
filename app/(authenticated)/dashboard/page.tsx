@@ -127,7 +127,7 @@ export default function DashboardPage() {
           </svg>
           ステータス別
         </h2>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {STATUS_ORDER.map((key) => {
             const info = STATUS_MAP[key];
             return (

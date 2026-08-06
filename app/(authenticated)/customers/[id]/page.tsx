@@ -506,7 +506,7 @@ export default function CustomerDetailPage() {
                   <div className="flex items-center gap-3 mt-2 pt-2 border-t border-gray-100">
                     <button
                       onClick={() =>
-                        router.push(`/journal/${journal.id}/edit`)
+                        router.push(`/journal/new?customer_id=${id}&journal_id=${journal.id}`)
                       }
                       className="text-xs text-navy font-medium"
                     >
