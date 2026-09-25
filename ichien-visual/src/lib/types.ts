@@ -82,10 +82,14 @@ export type RoomType =
   | "study"
   | "other";
 
+export type StairDir = "up" | "down" | "left" | "right";
+
 export type Room = {
   id: string;
   name: string;
   type: RoomType;
+  /** 階段: 上っていく向き（建物の底辺基準。up=奥へ, down=底辺側へ, left, right） */
+  dir?: StairDir;
   /** 建物外形の左下角を原点とした位置（m） */
   x: number;
   y: number;
@@ -183,4 +187,25 @@ export const ROOM_FILL: Record<RoomType, string> = {
 
 /** 畳数に換算するときの1帖の面積（m2）。不動産公正取引協議会の表示規約では1帖=1.62m2以上 */
 export const TATAMI_M2 = 1.62;
+
+/** ドラッグで置くときの標準サイズ（m、455mm単位） */
+export const ROOM_DEFAULT_SIZE: Record<RoomType, [number, number]> = {
+  ldk: [5.46, 4.55],
+  living: [3.64, 3.64],
+  kitchen: [2.73, 2.275],
+  bedroom: [3.64, 3.64],
+  japanese: [3.64, 3.64],
+  study: [1.82, 1.82],
+  entrance: [1.82, 1.365],
+  hall: [0.91, 3.64],
+  toilet: [0.91, 1.365],
+  bath: [1.82, 1.82],
+  washroom: [1.82, 1.82],
+  closet: [0.91, 0.91],
+  storage: [0.91, 1.82],
+  stairs: [0.91, 2.73],
+  garage: [2.73, 5.46],
+  balcony: [3.64, 0.91],
+  other: [1.82, 1.82],
+};
 export const TSUBO_M2 = 3.30578;

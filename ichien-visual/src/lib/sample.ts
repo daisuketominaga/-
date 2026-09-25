@@ -22,7 +22,7 @@ export function sampleProject(): Project {
         { id: "r4", name: "トイレ", type: "toilet", x: 3.4, y: 2.2, w: 1.0, d: 1.0 },
         { id: "r5", name: "洗面・脱衣室", type: "washroom", x: 4.4, y: 1.6, w: 1.8, d: 1.6 },
         { id: "r6", name: "浴室", type: "bath", x: 4.4, y: 0, w: 1.8, d: 1.6 },
-        { id: "r7", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 2.0 },
+        { id: "r7", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
         { id: "r8", name: "WCL", type: "closet", x: 0, y: 6.8, w: 1.4, d: 1.5 },
         { id: "r9", name: "洋室", type: "bedroom", x: 1.4, y: 4.2, w: 3.8, d: 4.1 },
         { id: "r10", name: "収納", type: "closet", x: 5.2, y: 4.2, w: 1.0, d: 1.2 },
@@ -31,7 +31,7 @@ export function sampleProject(): Project {
     {
       level: 2,
       rooms: [
-        { id: "r21", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 2.0 },
+        { id: "r21", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
         { id: "r22", name: "パントリー", type: "storage", x: 0, y: 6.8, w: 1.4, d: 1.5 },
         { id: "r23", name: "LDK", type: "ldk", x: 1.4, y: 0, w: 4.8, d: 8.3 },
         { id: "r24", name: "バルコニー", type: "balcony", x: 0, y: 0, w: 1.4, d: 2.6 },
@@ -41,7 +41,7 @@ export function sampleProject(): Project {
     {
       level: 3,
       rooms: [
-        { id: "r31", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 2.0 },
+        { id: "r31", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
         { id: "r32", name: "WCL", type: "closet", x: 0, y: 6.8, w: 1.4, d: 1.5 },
         { id: "r33", name: "洋室", type: "bedroom", x: 1.4, y: 4.4, w: 4.8, d: 3.9 },
         { id: "r34", name: "廊下", type: "hall", x: 1.4, y: 3.4, w: 3.6, d: 1.0 },

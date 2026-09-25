@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import type { Project, Room, RoomType, Floor } from "@/lib/types";
-import { ROOM_FILL, ROOM_LABEL, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Project, Room, RoomType, Floor, StairDir } from "@/lib/types";
+import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { clearances } from "@/lib/grid";
@@ -27,6 +27,17 @@ export default function FloorPlan({ project, setProject }: Props) {
   const [drag, setDrag] = useState<{ id: string; mode: "move" | "resize"; ox: number; oy: number; ow: number; od: number; sx: number; sy: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const allRef = useRef<SVGSVGElement>(null);
+  /** 一覧からドラッグ中の部屋 */
+  const [placing, setPlacing] = useState<{ type: RoomType; w: number; d: number } | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
+  const placingRef = useRef(placing);
+  placingRef.current = placing;
+  useEffect(() => {
+    if (!placing) return;
+    const up = () => setTimeout(() => { setPlacing(null); setGhost(null); }, 0);
+    window.addEventListener("pointerup", up);
+    return () => window.removeEventListener("pointerup", up);
+  }, [placing]);
 
   const floor: Floor = project.floors.find((f) => f.level === level) ?? { level, rooms: [] };
   const setFloor = (u: (f: Floor) => Floor) =>
@@ -55,7 +66,17 @@ export default function FloorPlan({ project, setProject }: Props) {
     return flip ? { x: building.w - x, y: building.d - y } : { x, y };
   };
 
+  const clampPos = (x: number, y: number, w: number, d: number) => ({
+    x: Math.max(0, Math.min(building.w - w, snap(x))),
+    y: Math.max(0, Math.min(building.d - d, snap(y))),
+  });
+
   const onMove = (e: React.PointerEvent) => {
+    if (placing) {
+      const p = localOf(e);
+      setGhost(clampPos(p.x - placing.w / 2, p.y - placing.d / 2, placing.w, placing.d));
+      return;
+    }
     if (!drag) return;
     const p = localOf(e);
     const dx = p.x - drag.sx;
@@ -85,10 +106,35 @@ export default function FloorPlan({ project, setProject }: Props) {
     return `${bedrooms}${hasLdk ? "LDK" : "K"}${extras.length ? "＋" + Array.from(new Set(extras)).join("＋") : ""}`;
   }, [project.floors]);
 
-  const addRoom = (type: RoomType) => {
-    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: 0, y: 0, w: Math.min(2.73, building.w), d: Math.min(2.73, building.d) };
+  const addRoom = (type: RoomType, at?: { x: number; y: number }) => {
+    const [dw, dd] = ROOM_DEFAULT_SIZE[type];
+    const w = Math.min(dw, building.w);
+    const d = Math.min(dd, building.d);
+    const pos = at ? clampPos(at.x, at.y, w, d) : { x: 0, y: 0 };
+    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: round(pos.x, 3), y: round(pos.y, 3), w, d, ...(type === "stairs" ? { dir: "up" as StairDir } : {}) };
     setFloor((f) => ({ ...f, rooms: [...f.rooms, r] }));
     setSel(r.id);
+  };
+
+  const rotateRoom = (id: string) => {
+    const r = floor.rooms.find((x) => x.id === id);
+    if (!r) return;
+    const w = Math.min(r.d, building.w);
+    const d = Math.min(r.w, building.d);
+    const pos = clampPos(r.x, r.y, w, d);
+    const turn: Record<StairDir, StairDir> = { up: "right", right: "down", down: "left", left: "up" };
+    updateRoom(id, { w, d, x: pos.x, y: pos.y, ...(r.dir ? { dir: turn[r.dir] } : {}) });
+  };
+
+  const copyStairsToAllFloors = (r: Room) => {
+    setProject((p) => {
+      const floors = Array.from({ length: p.building.floors }, (_, i) => i + 1).map((lv) => {
+        const f = p.floors.find((x) => x.level === lv) ?? { level: lv, rooms: [] };
+        const others = f.rooms.filter((x) => x.type !== "stairs");
+        return { ...f, rooms: [...others, { ...r, id: lv === level ? r.id : uid() }] };
+      });
+      return { ...p, floors };
+    });
   };
 
   const runAi = async (mode: "edit" | "generate") => {
@@ -148,9 +194,16 @@ export default function FloorPlan({ project, setProject }: Props) {
               ))}
             </div>
           </div>
+          <p className="text-[11px] text-slate-500">部屋を図の上へ<b>ドラッグして落とす</b>と置けます（クリックでも追加）。</p>
           <div className="flex flex-wrap gap-1">
             {ROOM_TYPES.map((t) => (
-              <button key={t} className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:bg-slate-50" onClick={() => addRoom(t)} style={{ background: ROOM_FILL[t] }}>
+              <button
+                key={t}
+                className="touch-none cursor-grab rounded border border-slate-300 px-1.5 py-0.5 text-[11px] shadow-sm hover:bg-slate-50 active:cursor-grabbing"
+                style={{ background: ROOM_FILL[t] }}
+                onPointerDown={(e) => { e.preventDefault(); const [w, d] = ROOM_DEFAULT_SIZE[t]; setPlacing({ type: t, w: Math.min(w, building.w), d: Math.min(d, building.d) }); }}
+                onClick={() => { if (!ghost) addRoom(t); }}
+              >
                 ＋{ROOM_LABEL[t]}
               </button>
             ))}
@@ -173,7 +226,22 @@ export default function FloorPlan({ project, setProject }: Props) {
                   <NumI label="幅" v={r.w} onChange={(v) => updateRoom(r.id, { w: v })} />
                   <NumI label="奥行" v={r.d} onChange={(v) => updateRoom(r.id, { d: v })} />
                 </div>
-                <div className="mt-0.5 text-[10px] text-slate-500">{round(r.w * r.d, 2)} m² ＝ {round((r.w * r.d) / TATAMI_M2, 1)} 帖</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+                  <span>{round(r.w * r.d, 2)} m² ＝ {round((r.w * r.d) / TATAMI_M2, 1)} 帖</span>
+                  <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); rotateRoom(r.id); }}>↻ 90°回す</button>
+                  {r.type === "stairs" && (
+                    <>
+                      <span>上る向き</span>
+                      <select className="field w-auto px-1 py-0" value={r.dir ?? "up"} onChange={(e) => updateRoom(r.id, { dir: e.target.value as StairDir })}>
+                        <option value="up">奥へ（上）</option>
+                        <option value="down">底辺側へ（下）</option>
+                        <option value="left">左へ</option>
+                        <option value="right">右へ</option>
+                      </select>
+                      <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); copyStairsToAllFloors(r); }}>全階に同じ階段</button>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
             {floor.rooms.length === 0 && <div className="text-xs text-slate-400">部屋がありません。上のボタンで追加するか「ゼロから提案」を押してください。</div>}
@@ -222,13 +290,31 @@ export default function FloorPlan({ project, setProject }: Props) {
             className="mx-auto max-h-[70vh] w-full touch-none select-none"
             style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif" }}
             onPointerMove={onMove}
-            onPointerUp={() => setDrag(null)}
-            onPointerLeave={() => setDrag(null)}
+            onPointerUp={(e) => {
+              setDrag(null);
+              if (placing) {
+                const p = localOf(e);
+                addRoom(placing.type, { x: p.x - placing.w / 2, y: p.y - placing.d / 2 });
+                setPlacing(null);
+                setGhost(null);
+              }
+            }}
+            onPointerLeave={() => { setDrag(null); setGhost(null); }}
             onPointerDown={(e) => { if (e.target === svgRef.current) setSel(null); }}
           >
             <rect width={W} height={H} fill="#fff" />
-            <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} flip={flip} onStartDrag={(r, mode, e) => { if (mode === "resize" && flip) return; const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
+            <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} flip={flip} level={level} onStartDrag={(r, mode, e) => { if (mode === "resize" && flip) return; const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
             {level === 1 && <BoundaryDims cl={cl} ox={ox} oy={oy} px={PX} w={building.w} d={building.d} flip={flip} roadSide="bottom" />}
+            {placing && ghost && (() => {
+              const gx = flip ? ox + (building.w - ghost.x - placing.w) * PX : ox + ghost.x * PX;
+              const gy = flip ? oy + ghost.y * PX : oy + (building.d - ghost.y - placing.d) * PX;
+              return (
+                <g style={{ pointerEvents: "none" }}>
+                  <rect x={gx} y={gy} width={placing.w * PX} height={placing.d * PX} fill={ROOM_FILL[placing.type]} fillOpacity={0.7} stroke="#2f6fed" strokeWidth={2} strokeDasharray="6 3" />
+                  <text x={gx + (placing.w * PX) / 2} y={gy + (placing.d * PX) / 2 + 4} textAnchor="middle" fontSize={13} fontWeight={700} fill="#1d479c">{ROOM_LABEL[placing.type]}</text>
+                </g>
+              );
+            })()}
             <text x={ox} y={oy - 62} fontSize={16} fontWeight={700} fill="#222">
               {level}階　床面積 {round(floorArea(floor), 2)}㎡{balconyArea(floor) ? `（バルコニー ${round(balconyArea(floor), 2)}㎡ 別）` : ""}
             </text>
@@ -243,7 +329,7 @@ export default function FloorPlan({ project, setProject }: Props) {
 
         {selected && (
           <div className="text-xs text-slate-500">
-            選択中: <b>{selected.name}</b>　ドラッグで移動、右下の■で大きさ変更。数値は左の表で。
+            選択中: <b>{selected.name}</b>　ドラッグで移動、右下の■で大きさ変更。数値と回転・階段の向きは左の表で。
           </div>
         )}
       </section>
@@ -286,7 +372,7 @@ export function NorthMark({ x, y, deg }: { x: number; y: number; deg: number }) 
 }
 
 /** 1フロア分の間取り描画 */
-export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDrag, compact, flip }: {
+export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDrag, compact, flip, level }: {
   floor: Floor;
   project: Project;
   ox: number;
@@ -297,8 +383,11 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
   onStartDrag?: (r: Room, mode: "move" | "resize", e: React.PointerEvent) => void;
   compact?: boolean;
   flip?: boolean;
+  level?: number;
 }) {
   const b = project.building;
+  const lv = level ?? floor.level;
+  const topFloor = b.floors;
   const toPx = (x: number, y: number) => (flip ? { x: ox + (b.w - x) * px, y: oy + y * px } : { x: ox + x * px, y: oy + (b.d - y) * px });
   const wallW = compact ? 4 : 6;
   return (
@@ -323,10 +412,16 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
         return (
           <g key={r.id} onPointerDown={(e) => { e.stopPropagation(); onSelect?.(r.id); onStartDrag?.(r, "move", e); }} className={onStartDrag ? "cursor-move" : ""}>
             <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
-            {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} />}
-            <text x={p.x + w / 2} y={p.y + h / 2 + (showTatami ? -2 : 4)} textAnchor="middle" fontSize={Math.min(compact ? 12 : 15, Math.max(8, w / 5))} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
-              {r.name}
-            </text>
+            {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} dir={r.dir ?? "up"} flip={!!flip} showUp={lv < topFloor} showDown={lv > 1} compact={compact} />}
+            {r.type === "stairs" ? (
+              <text x={p.x + 4} y={p.y + (compact ? 9 : 12)} fontSize={compact ? 8 : 10} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={2} paintOrder="stroke">
+                {r.name}
+              </text>
+            ) : (
+              <text x={p.x + w / 2} y={p.y + h / 2 + (showTatami ? -2 : 4)} textAnchor="middle" fontSize={Math.min(compact ? 12 : 15, Math.max(8, w / 5))} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
+                {r.name}
+              </text>
+            )}
             {showTatami && (
               <text x={p.x + w / 2} y={p.y + h / 2 + (compact ? 12 : 16)} textAnchor="middle" fontSize={compact ? 10 : 13} fill="#333" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
                 {round(tatami, 1).toFixed(1)}帖
@@ -384,14 +479,48 @@ export function BoundaryDims({ cl, ox, oy, px, w, d, flip, compact }: { cl: { bo
   );
 }
 
-/** 階段だけは段の線を入れる（家具は描かない） */
-function StairLines({ x, y, w, h, px }: { x: number; y: number; w: number; h: number; px: number }) {
-  const n = Math.max(6, Math.floor(h / (0.23 * px)));
+/** 階段: 段の線は進行方向に直交、UP/DN の矢印を向きに合わせて描く */
+function StairLines({ x, y, w, h, px, dir, flip, showUp, showDown, compact }: { x: number; y: number; w: number; h: number; px: number; dir: StairDir; flip: boolean; showUp: boolean; showDown: boolean; compact?: boolean }) {
+  // 建物基準の向き → 画面上の向き（反転時は上下左右が逆）
+  const screenDir: StairDir = flip ? ({ up: "down", down: "up", left: "right", right: "left" } as const)[dir] : dir;
+  const vertical = screenDir === "up" || screenDir === "down";
+  const stepPitch = 0.23 * px;
+  const n = Math.max(4, Math.floor((vertical ? h : w) / stepPitch));
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  // 矢印: UP は screenDir へ、DN はその逆
+  const vec = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[screenDir];
+  const len = (vertical ? h : w) * 0.7;
+  const arrow = (sign: 1 | -1, label: string, offset: number) => {
+    const ax = cx + (vertical ? offset : 0);
+    const ay = cy + (vertical ? 0 : offset);
+    const x1 = ax - (vec[0] * sign * len) / 2;
+    const y1 = ay - (vec[1] * sign * len) / 2;
+    const x2 = ax + (vec[0] * sign * len) / 2;
+    const y2 = ay + (vec[1] * sign * len) / 2;
+    const ang = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+    return (
+      <g key={label}>
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c0392b" strokeWidth={1.2} />
+        <polygon points={`${x2},${y2} ${x2 - 7},${y2 - 3.5} ${x2 - 7},${y2 + 3.5}`} fill="#c0392b" transform={`rotate(${ang} ${x2} ${y2})`} />
+        <text x={x1 - vec[0] * sign * 8} y={y1 - vec[1] * sign * 8 + 3} textAnchor="middle" fontSize={compact ? 7 : 9} fontWeight={700} fill="#c0392b" stroke="#fff" strokeWidth={2} paintOrder="stroke">{label}</text>
+      </g>
+    );
+  };
+  const off = (vertical ? w : h) * 0.22;
   return (
-    <g stroke="#666" strokeWidth={0.8}>
-      {Array.from({ length: n }, (_, i) => (
-        <line key={i} x1={x} y1={y + ((i + 1) * h) / (n + 1)} x2={x + w} y2={y + ((i + 1) * h) / (n + 1)} />
-      ))}
+    <g>
+      <g stroke="#666" strokeWidth={0.8}>
+        {Array.from({ length: n }, (_, i) =>
+          vertical ? (
+            <line key={i} x1={x} y1={y + ((i + 1) * h) / (n + 1)} x2={x + w} y2={y + ((i + 1) * h) / (n + 1)} />
+          ) : (
+            <line key={i} x1={x + ((i + 1) * w) / (n + 1)} y1={y} x2={x + ((i + 1) * w) / (n + 1)} y2={y + h} />
+          )
+        )}
+      </g>
+      {showUp && arrow(1, "UP", showDown ? -off : 0)}
+      {showDown && arrow(-1, "DN", showUp ? off : 0)}
     </g>
   );
 }
