@@ -5,6 +5,7 @@ import type { Project, Room, RoomType, Floor } from "@/lib/types";
 import { ROOM_FILL, ROOM_LABEL, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
+import { clearances } from "@/lib/grid";
 
 type Props = {
   project: Project;
@@ -36,16 +37,22 @@ export default function FloorPlan({ project, setProject }: Props) {
     });
   const updateRoom = (id: string, patch: Partial<Room>) => setFloor((f) => ({ ...f, rooms: f.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
 
-  const W = building.w * PX + 80;
-  const H = building.d * PX + 80;
-  const ox = 40;
-  const oy = 40;
+  const flip = !!project.grid?.flip;
+  const cl = clearances(project.site, project.grid, building.w, building.d);
+  const M = 90; // 境界までの寸法を書く余白
+  const W = building.w * PX + M * 2;
+  const H = building.d * PX + M * 2;
+  const ox = M;
+  const oy = M;
   const toPx = (x: number, y: number) => ({ x: ox + x * PX, y: oy + (building.d - y) * PX });
+  void toPx;
 
   const localOf = (e: React.PointerEvent) => {
     const svg = svgRef.current!;
     const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse());
-    return { x: (pt.x - ox) / PX, y: building.d - (pt.y - oy) / PX };
+    const x = (pt.x - ox) / PX;
+    const y = building.d - (pt.y - oy) / PX;
+    return flip ? { x: building.w - x, y: building.d - y } : { x, y };
   };
 
   const onMove = (e: React.PointerEvent) => {
@@ -220,11 +227,12 @@ export default function FloorPlan({ project, setProject }: Props) {
             onPointerDown={(e) => { if (e.target === svgRef.current) setSel(null); }}
           >
             <rect width={W} height={H} fill="#fff" />
-            <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} onStartDrag={(r, mode, e) => { const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
-            <text x={ox} y={oy - 14} fontSize={16} fontWeight={700} fill="#222">
+            <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} flip={flip} onStartDrag={(r, mode, e) => { if (mode === "resize" && flip) return; const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
+            {level === 1 && <BoundaryDims cl={cl} ox={ox} oy={oy} px={PX} w={building.w} d={building.d} flip={flip} roadSide="bottom" />}
+            <text x={ox} y={oy - 62} fontSize={16} fontWeight={700} fill="#222">
               {level}階　床面積 {round(floorArea(floor), 2)}㎡{balconyArea(floor) ? `（バルコニー ${round(balconyArea(floor), 2)}㎡ 別）` : ""}
             </text>
-            <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg + project.building.rotDeg} />
+            <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
           </svg>
         </div>
 
@@ -278,7 +286,7 @@ export function NorthMark({ x, y, deg }: { x: number; y: number; deg: number }) 
 }
 
 /** 1フロア分の間取り描画 */
-export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDrag, compact }: {
+export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDrag, compact, flip }: {
   floor: Floor;
   project: Project;
   ox: number;
@@ -288,9 +296,10 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
   onSelect?: (id: string) => void;
   onStartDrag?: (r: Room, mode: "move" | "resize", e: React.PointerEvent) => void;
   compact?: boolean;
+  flip?: boolean;
 }) {
   const b = project.building;
-  const toPx = (x: number, y: number) => ({ x: ox + x * px, y: oy + (b.d - y) * px });
+  const toPx = (x: number, y: number) => (flip ? { x: ox + (b.w - x) * px, y: oy + y * px } : { x: ox + x * px, y: oy + (b.d - y) * px });
   const wallW = compact ? 4 : 6;
   return (
     <g>
@@ -303,7 +312,9 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
         <line key={"gv" + v} x1={ox} y1={oy + (b.d - v) * px} x2={ox + b.w * px} y2={oy + (b.d - v) * px} stroke={Math.abs((v / MODULE) % 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} />
       ))}
       {floor.rooms.map((r) => {
-        const p = toPx(r.x, r.y + r.d);
+        const p0 = toPx(r.x, r.y + r.d);
+        const p1 = toPx(r.x + r.w, r.y);
+        const p = { x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y) };
         const w = r.w * px;
         const h = r.d * px;
         const isSel = sel === r.id;
@@ -321,12 +332,54 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
                 {round(tatami, 1).toFixed(1)}帖
               </text>
             )}
-            {isSel && onStartDrag && (
+            {isSel && onStartDrag && !flip && (
               <rect x={p.x + w - 8} y={p.y + h - 8} width={10} height={10} fill="#2f6fed" className="cursor-nwse-resize" onPointerDown={(e) => { e.stopPropagation(); onStartDrag(r, "resize", e); }} />
             )}
           </g>
         );
       })}
+    </g>
+  );
+}
+
+/** 1階: 建物の各辺から境界線までの距離（mm） */
+export function BoundaryDims({ cl, ox, oy, px, w, d, flip, compact }: { cl: { bottom: number | null; top: number | null; left: number | null; right: number | null }; ox: number; oy: number; px: number; w: number; d: number; flip: boolean; roadSide: "bottom"; compact?: boolean }) {
+  // 表示上の各辺に対応する距離（反転時は上下左右が入れ替わる）
+  const top = flip ? cl.bottom : cl.top;
+  const bottom = flip ? cl.top : cl.bottom;
+  const left = flip ? cl.right : cl.left;
+  const right = flip ? cl.left : cl.right;
+  const roadOnTop = flip;
+  const fs = compact ? 9 : 11;
+  const L = compact ? 22 : 34;
+  const mm = (m: number | null) => (m === null ? "－" : `${Math.round(m * 1000).toLocaleString()}`);
+  const cx = ox + (w * px) / 2;
+  const cy = oy + (d * px) / 2;
+  const Arrow = ({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) => (
+    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c0392b" strokeWidth={1} markerStart="url(#bdS)" markerEnd="url(#bdE)" />
+  );
+  return (
+    <g fontSize={fs} fill="#c0392b" fontWeight={700}>
+      <defs>
+        <marker id="bdE" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#c0392b" /></marker>
+        <marker id="bdS" markerWidth="6" markerHeight="6" refX="1" refY="3" orient="auto"><path d="M6,0 L0,3 L6,6 z" fill="#c0392b" /></marker>
+      </defs>
+      {/* 上 */}
+      <Arrow x1={cx} y1={oy - 2} x2={cx} y2={oy - L} />
+      <line x1={ox - 10} y1={oy - L} x2={ox + w * px + 10} y2={oy - L} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
+      <text x={cx + 6} y={oy - L / 2 + 4}>{roadOnTop ? "道路境界線まで" : "隣地境界線まで"} {mm(top)}</text>
+      {/* 下 */}
+      <Arrow x1={cx} y1={oy + d * px + 2} x2={cx} y2={oy + d * px + L} />
+      <line x1={ox - 10} y1={oy + d * px + L} x2={ox + w * px + 10} y2={oy + d * px + L} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
+      <text x={cx + 6} y={oy + d * px + L / 2 + 4}>{roadOnTop ? "隣地境界線まで" : "道路境界線まで"} {mm(bottom)}</text>
+      {/* 左 */}
+      <Arrow x1={ox - 2} y1={cy} x2={ox - L} y2={cy} />
+      <line x1={ox - L} y1={oy - 10} x2={ox - L} y2={oy + d * px + 10} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
+      <text x={ox - L / 2} y={cy - 8} textAnchor="middle" transform={`rotate(-90 ${ox - L / 2} ${cy - 8})`}>隣地境界線まで {mm(left)}</text>
+      {/* 右 */}
+      <Arrow x1={ox + w * px + 2} y1={cy} x2={ox + w * px + L} y2={cy} />
+      <line x1={ox + w * px + L} y1={oy - 10} x2={ox + w * px + L} y2={oy + d * px + 10} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
+      <text x={ox + w * px + L / 2} y={cy - 8} textAnchor="middle" transform={`rotate(90 ${ox + w * px + L / 2} ${cy - 8})`}>隣地境界線まで {mm(right)}</text>
     </g>
   );
 }
@@ -349,8 +402,8 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
   function AllFloorsSvg({ project, summary, total, floorArea, balconyArea }, ref) {
     const b = project.building;
     const px = 42;
-    const cellW = b.w * px + 60;
-    const cellH = b.d * px + 90;
+    const cellW = b.w * px + 120;
+    const cellH = b.d * px + 150;
     const cols = 2;
     const rows = Math.ceil((project.floors.length + 1) / cols);
     const W = cols * cellW + 40;
@@ -371,8 +424,9 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
               <text x={cx + 20} y={cy + 18} fontSize={14} fontWeight={700}>
                 {f.level}階　床面積 {round(floorArea(f), 2)}㎡{balconyArea(f) ? `（バルコニー ${round(balconyArea(f), 2)}㎡ 別）` : ""}
               </text>
-              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg} />
-              <FloorSvg floor={f} project={project} ox={cx + 30} oy={cy + 50} px={px} compact />
+              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
+              <FloorSvg floor={f} project={project} ox={cx + 60} oy={cy + 80} px={px} compact flip={!!project.grid?.flip} />
+              {f.level === 1 && <BoundaryDims cl={clearances(project.site, project.grid, b.w, b.d)} ox={cx + 60} oy={cy + 80} px={px} w={b.w} d={b.d} flip={!!project.grid?.flip} roadSide="bottom" compact />}
             </g>
           );
         })}

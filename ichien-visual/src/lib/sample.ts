@@ -89,7 +89,7 @@ export function sampleProject(): Project {
       areaOverride: 79.43,
       coverageRatio: 80,
       farRatio: 300,
-      setback: 0.5,
+      setback: 0.6,
       fireproofException: false,
     },
     grid: { baseEdge: 4, u: 0.455, v: 0.91 },

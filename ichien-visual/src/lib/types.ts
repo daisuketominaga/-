@@ -121,6 +121,8 @@ export type GridSetting = {
   u: number;
   /** 底辺から内側へ入った建物の位置（m、455mm刻み） */
   v: number;
+  /** 180度回転して表示（底辺を画面の上にする） */
+  flip?: boolean;
 };
 
 export const MODULE = 0.91;

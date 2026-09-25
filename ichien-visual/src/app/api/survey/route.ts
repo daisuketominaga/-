@@ -17,7 +17,7 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
 
 座標系:
 - 単位はメートル。x は東が正、y は北が正。
-- 図の北矢印を基準に、北が画面上になるように解釈する。
+- 求積表の座標を使う場合は座標系がそのまま北基準。求積表が無い場合のみ北矢印を基準に、北が画面上になるように解釈する。
 - 原点は敷地のいちばん南西寄りの点付近（すべての座標が 0 以上になるよう平行移動する）。
 - 点は敷地の外周を一方向（時計回り）に並べる。隅切りも点として含める。
 - 辺の長さが図に書かれている場合、その数字を最優先し、座標はそれと矛盾しないように決める。
@@ -30,7 +30,6 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
     {"index":0,"length":8.40},
     {"index":4,"length":7.63,"road":true,"roadWidth":4.0,"roadLabel":"法42条1項1号 公道","note":"NTT柱有"}
   ],
-  "northDeg": 0,  // 北矢印が画面の真上から時計回りに何度傾いているか（真上なら0）
   "areaOverride": 79.43,
   "coords": [{"label":"K1","X":109.234,"Y":103.087}, ...],
   "notes": "読み取りで自信のない箇所を一言。求積表から計算した場合はその旨"
@@ -74,7 +73,8 @@ export async function POST(req: NextRequest) {
     const site = {
       points,
       edges: Array.isArray(json.edges) ? json.edges : [],
-      northDeg: typeof json.northDeg === "number" ? json.northDeg : 0,
+      // 求積表の座標（X=南北）をそのまま描くので、画面の上が北
+      northDeg: 0,
       areaOverride: typeof json.areaOverride === "number" ? json.areaOverride : undefined,
     };
     return NextResponse.json({ site, coords: json.coords ?? null, notes: json.notes, usage: msg.usage });

@@ -94,3 +94,42 @@ export function maxRect(site: Site, edgeIndex: number, setback: number) {
 }
 
 export const modules = (m: number) => round(m / MODULE, 2);
+
+/** 半直線 (o + s*dir, s>0) と線分 a-b の交点までの距離 */
+function rayToSegment(o: Pt, dir: Pt, a: Pt, b: Pt): number | null {
+  const ex = b.x - a.x;
+  const ey = b.y - a.y;
+  const det = dir.x * ey - dir.y * ex;
+  if (Math.abs(det) < 1e-9) return null;
+  const dx = a.x - o.x;
+  const dy = a.y - o.y;
+  const s = (dx * ey - dy * ex) / det;
+  const t = (dx * dir.y - dy * dir.x) / det;
+  if (s <= 1e-9 || t < -1e-9 || t > 1 + 1e-9) return null;
+  return s;
+}
+
+export type Clearances = { bottom: number | null; top: number | null; left: number | null; right: number | null };
+
+/** 建物の各辺の中点から、外向きに境界線までの距離（底辺座標）。bottom が底辺側 */
+export function clearances(site: Site, g: GridSetting, w: number, d: number): Clearances {
+  const f = baseFrame(site, g.baseEdge);
+  const loc = site.points.map((p) => toLocal(f, p));
+  const n = loc.length;
+  const cast = (o: Pt, dir: Pt) => {
+    let best: number | null = null;
+    for (let i = 0; i < n; i++) {
+      const s = rayToSegment(o, dir, loc[i], loc[(i + 1) % n]);
+      if (s !== null && (best === null || s < best)) best = s;
+    }
+    return best;
+  };
+  const u = g.u;
+  const v = g.v;
+  return {
+    bottom: cast({ x: u + w / 2, y: v }, { x: 0, y: -1 }),
+    top: cast({ x: u + w / 2, y: v + d }, { x: 0, y: 1 }),
+    left: cast({ x: u, y: v + d / 2 }, { x: -1, y: 0 }),
+    right: cast({ x: u + w, y: v + d / 2 }, { x: 1, y: 0 }),
+  };
+}
