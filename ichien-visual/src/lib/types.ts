@@ -33,6 +33,37 @@ export type Site = {
   setback: number;
   /** 防火・準防火地域で外壁が耐火構造（建築基準法65条）→ 離れ線を非表示 */
   fireproofException: boolean;
+  /** 高さ制限のチェック用（値は物件ごとに役所で確認して入力） */
+  heightRules?: HeightRules;
+};
+
+export type HeightRules = {
+  /** 道路斜線の勾配（住居系 1.25 / その他 1.5） */
+  roadSlope: number;
+  /** 道路斜線の適用距離 m（容積率と用途地域で決まる） */
+  roadApplyDist: number;
+  /** 北側斜線を使う（第一種・第二種低層住居専用地域 5m＋1.25、中高層 10m＋1.25） */
+  northEnabled: boolean;
+  northBase: number;
+  northSlope: number;
+  /** 高度地区（自治体ごと。無ければオフ） */
+  kodoEnabled: boolean;
+  kodoBase: number;
+  kodoSlope: number;
+  /** 絶対高さ制限 m（低層住居専用地域の 10m/12m など。0 なら無し） */
+  absoluteMax: number;
+};
+
+export const DEFAULT_HEIGHT_RULES: HeightRules = {
+  roadSlope: 1.25,
+  roadApplyDist: 20,
+  northEnabled: false,
+  northBase: 5,
+  northSlope: 1.25,
+  kodoEnabled: false,
+  kodoBase: 5,
+  kodoSlope: 0.6,
+  absoluteMax: 0,
 };
 
 export type RoofType = "flat" | "shed" | "gable";

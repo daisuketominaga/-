@@ -1,4 +1,4 @@
-import type { Pt, Site, Building, Face } from "./types";
+import type { Pt, Site, Building, Face, Project } from "./types";
 
 export const round = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 
@@ -218,4 +218,17 @@ export function roadFaceOf(site: Site, b: Building): Face | null {
     }
   }
   return best;
+}
+
+
+/**
+ * 画面上での北の向き（画面の上を 0 とした時計回りの度数）。
+ * 方位の元は site.northDeg ひとつだけ。敷地図はそのまま、配置図・間取り図は
+ * 底辺を基準にした回転（building.rotDeg）と反転（grid.flip）を足す。
+ */
+export function northScreenDeg(project: Pick<Project, "site" | "building" | "grid">, view: "site" | "plan"): number {
+  const base = project.site.northDeg;
+  if (view === "site") return ((base % 360) + 360) % 360;
+  const deg = base + project.building.rotDeg + (project.grid?.flip ? 180 : 0);
+  return ((deg % 360) + 360) % 360;
 }

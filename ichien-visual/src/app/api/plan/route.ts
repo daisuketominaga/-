@@ -14,7 +14,9 @@ const SYSTEM = `あなたは日本の木造住宅の間取りを設計する建�
 - 部屋同士は重ならないこと。建物内に隙間が残らないよう、廊下や収納で埋める。
 - 階段は全階で同じ位置・同じ大きさにする（type: "stairs"、0.91×2.73m 程度）。階段には "dir" を必ず付ける（上っていく向き: "up"=奥へ, "down"=底辺(道路)側へ, "left", "right"）。階段の形 "stairKind" は "straight"（0.91×2.73）か "u_turn"（回り階段 1.82×1.82）か "l_turn"。既存の stairKind と turn は変えない。段の長手方向と dir を一致させる（dir が up/down なら d > w、left/right なら w > d）。
 - バルコニーは type "balcony" で建物外形の中に置く（床面積には含めない）。
-- 玄関 entrance は道路側（ヒントがなければ西面 x=0 側）に置く。
+- 建物の底辺（y=0 の面）が道路側。玄関 entrance は道路側の面に接するように置く。
+- 入力に "fixed"（固定する部屋の id 一覧）があれば、その部屋は位置・大きさ・名前・向き（dir, stairKind, turn）を一切変えずにそのまま残し、残りを設計する。特に玄関の位置は依頼者が決めたものなので動かさない。
+- 玄関の隣にはホール（type hall）を置き、階段は玄関ホールから上がれる位置に。水回り（浴室・洗面・トイレ）は近くにまとめる。LDK は道路の反対側か2階の日当たりの良い側へ。
 - 部屋の広さの目安: トイレ 1.0×1.0、浴室 1.6×1.6〜1.8×1.8、洗面 1.6×1.6、廊下幅 0.9〜1.0。
 - type は次から選ぶ: ldk, living, kitchen, bedroom, japanese, study, entrance, hall, toilet, bath, washroom, closet, storage, stairs, garage, balcony, other。
 - name は日本語（LDK、洋室、和室、玄関、廊下、トイレ、浴室、洗面・脱衣室、WCL、収納、パントリー、ガレージ、バルコニー、スタディ など）。
@@ -28,11 +30,11 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY が設定されていません" }, { status: 500 });
   const body = await req.json();
-  const { mode, instruction, project, level } = body as { mode: "edit" | "generate"; instruction: string; project: unknown; level: number };
+  const { mode, instruction, project, level, fixed } = body as { mode: "edit" | "generate"; instruction: string; project: unknown; level: number; fixed?: string[] };
 
   const user =
     mode === "generate"
-      ? `次の建物外形に対して、全階の間取りをゼロから提案してください。今見ている階は ${level} 階です。要望: ${instruction || "1階に玄関・水回り・ガレージまたは個室、2階にLDK、3階に個室、というよくある3階建ての構成"}\n\n入力:\n${JSON.stringify(project)}`
+      ? `次の建物外形に対して、全階の間取りを提案してください。今見ている階は ${level} 階です。${fixed && fixed.length ? `固定する部屋の id（動かさない）: ${fixed.join(", ")}。` : "固定する部屋はありません。"}要望: ${instruction || "1階に玄関・水回り・ガレージまたは個室、2階にLDK、3階に個室、というよくある3階建ての構成"}\n\n入力:\n${JSON.stringify({ ...(project as object), fixed: fixed ?? [] })}`
       : `次の間取りを、指示に従って直してください。今見ている階は ${level} 階です。\n指示: ${instruction}\n\n入力:\n${JSON.stringify(project)}`;
 
   const client = new Anthropic({ apiKey });

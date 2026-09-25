@@ -1,6 +1,6 @@
 import type { Pt, Site, GridSetting, Building } from "./types";
 import { HALF, MODULE } from "./types";
-import { pointInPolygon, insetPolygon, round } from "./geometry";
+import { pointInPolygon, insetPolygon, round, dist } from "./geometry";
 
 /** 底辺の枠組み: 始点 a、辺に沿った単位ベクトル t、内側向きの単位法線 n */
 export type Frame = { a: Pt; t: Pt; n: Pt; len: number; reversed: boolean };
@@ -131,5 +131,48 @@ export function clearances(site: Site, g: GridSetting, w: number, d: number): Cl
     top: cast({ x: u + w / 2, y: v + d }, { x: 0, y: 1 }),
     left: cast({ x: u, y: v + d / 2 }, { x: -1, y: 0 }),
     right: cast({ x: u + w, y: v + d / 2 }, { x: 1, y: 0 }),
+  };
+}
+
+
+export type RoadBand = { poly: Pt[]; mid: Pt; w: number; label: string };
+
+/** 道路帯（底辺座標）。辺の外側へ幅員ぶん広げた帯 */
+export function roadBands(site: Site, f: Frame, ext = 6): RoadBand[] {
+  const cx = site.points.reduce((s, p) => s + p.x, 0) / site.points.length;
+  const cy = site.points.reduce((s, p) => s + p.y, 0) / site.points.length;
+  return site.edges
+    .filter((e) => e.road && e.index < site.points.length)
+    .map((e) => {
+      const a = site.points[e.index];
+      const b = site.points[(e.index + 1) % site.points.length];
+      const w = e.roadWidth ?? 4;
+      const dx = (b.x - a.x) / (dist(a, b) || 1);
+      const dy = (b.y - a.y) / (dist(a, b) || 1);
+      let nx = dy, ny = -dx;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      if ((mx + nx - cx) ** 2 + (my + ny - cy) ** 2 < (mx - cx) ** 2 + (my - cy) ** 2) { nx = -nx; ny = -ny; }
+      const poly = [
+        { x: a.x - dx * ext, y: a.y - dy * ext },
+        { x: b.x + dx * ext, y: b.y + dy * ext },
+        { x: b.x + dx * ext + nx * w, y: b.y + dy * ext + ny * w },
+        { x: a.x - dx * ext + nx * w, y: a.y - dy * ext + ny * w },
+      ].map((p) => toLocal(f, p));
+      const mid = toLocal(f, { x: mx + nx * (w / 2), y: my + ny * (w / 2) });
+      return { poly, mid, w, label: e.roadLabel ?? "公道" };
+    });
+}
+
+export type SiteContext = { site: Pt[]; setback: Pt[]; roads: RoadBand[] };
+
+/** 敷地・離れ線・道路を「建物の左下を原点にした建物座標（m）」で返す。間取り図の背景用 */
+export function siteInBuildingFrame(site: Site, g: GridSetting, setback: number): SiteContext {
+  const f = baseFrame(site, g.baseEdge);
+  const shift = (p: Pt) => ({ x: p.x - g.u, y: p.y - g.v });
+  const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
+  return {
+    site: site.points.map((p) => shift(toLocal(f, p))),
+    setback: inner.map((p) => shift(toLocal(f, p))),
+    roads: roadBands(site, f, 3).map((r) => ({ ...r, poly: r.poly.map(shift), mid: shift(r.mid) })),
   };
 }

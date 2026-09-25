@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
 import type { Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
-import { round } from "@/lib/geometry";
+import { round, northScreenDeg } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
+import { siteInBuildingFrame, type SiteContext } from "@/lib/grid";
 
 type Props = {
   project: Project;
@@ -164,11 +165,14 @@ export default function FloorPlan({ project, setProject }: Props) {
   };
 
   const flip = !!project.grid?.flip;
+  const [showSite, setShowSite] = useState(true);
+  const siteCtx = useMemo(() => siteInBuildingFrame(project.site, project.grid, project.site.fireproofException ? 0 : project.site.setback), [project.site, project.grid]);
+  const pad = useMemo(() => sitePadding(siteCtx, building.w, building.d, showSite), [siteCtx, building.w, building.d, showSite]);
   const M = 90;
-  const W = building.w * PX + M * 2;
-  const H = building.d * PX + M * 2;
-  const ox = M;
-  const oy = M;
+  const W = building.w * PX + M * 2 + (pad.l + pad.r) * PX;
+  const H = building.d * PX + M * 2 + (pad.t + pad.b) * PX;
+  const ox = M + (flip ? pad.r : pad.l) * PX;
+  const oy = M + (flip ? pad.b : pad.t) * PX;
 
   const localOf = (e: { clientX: number; clientY: number }) => {
     const svg = svgRef.current!;
@@ -287,18 +291,40 @@ export default function FloorPlan({ project, setProject }: Props) {
     });
   };
 
+  /** 建具が新しい間取りの壁の上に残っているか */
+  const fixtureOnWall = (fx: Fixture, rooms: Room[]) => {
+    const eps = 1e-6;
+    return wallSegments(building.w, building.d, rooms).some((w) => {
+      if (w.along !== fx.along) return false;
+      if (w.along === "h") return Math.abs(w.y1 - fx.y) < eps && fx.x >= w.x1 - eps && fx.x + fx.width <= w.x2 + eps;
+      return Math.abs(w.x1 - fx.x) < eps && fx.y >= w.y1 - eps && fx.y + fx.width <= w.y2 + eps;
+    });
+  };
+
   const runAi = async (mode: "edit" | "generate") => {
     setBusy(true);
     setMsg(null);
     try {
+      // 「提案」では、依頼者が置いた玄関と階段は動かさない
+      const fixed = mode === "generate" ? project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "entrance" || r.type === "stairs").map((r) => r.id) : undefined;
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, instruction, project: { building: project.building, floors: project.floors, site: { areaOverride: siteArea, coverageRatio: project.site.coverageRatio, farRatio: project.site.farRatio } }, level }),
+        body: JSON.stringify({ mode, instruction, project: { building: project.building, floors: project.floors, site: { areaOverride: siteArea, coverageRatio: project.site.coverageRatio, farRatio: project.site.farRatio } }, level, fixed }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "失敗しました");
-      setProject((p) => ({ ...p, floors: (json.floors as Floor[]).map((f) => ({ ...f, fixtures: p.floors.find((x) => x.level === f.level)?.fixtures ?? [] })) }));
+      // 固定した部屋は元のまま戻す。建具は新しい壁の上に残るものだけ残す
+      setProject((p) => ({
+        ...p,
+        floors: (json.floors as Floor[]).map((f) => {
+          const old = p.floors.find((x) => x.level === f.level);
+          const keep = (old?.rooms ?? []).filter((r) => fixed?.includes(r.id));
+          const rooms = [...f.rooms.filter((r) => !keep.some((k) => k.id === r.id)), ...keep];
+          const fixtures = (old?.fixtures ?? []).filter((fx) => fixtureOnWall(fx, rooms));
+          return { ...f, rooms, fixtures };
+        }),
+      }));
       setMsg(json.notes || "更新しました");
       setInstruction("");
     } catch (e) {
@@ -434,10 +460,11 @@ export default function FloorPlan({ project, setProject }: Props) {
             <button className="btn-primary flex-1 justify-center" disabled={busy || !instruction.trim()} onClick={() => runAi("edit")}>
               {busy ? "考え中…" : "この指示で直す"}
             </button>
-            <button className="btn-ghost" disabled={busy} onClick={() => { if (confirm("今の間取りを捨てて、建物の大きさから間取りを提案させますか？")) runAi("generate"); }}>
-              ゼロから提案
+            <button className="btn-ghost" disabled={busy} onClick={() => { const hasEnt = project.floors.some((f) => f.rooms.some((r) => r.type === "entrance")); if (confirm(hasEnt ? "玄関と階段はそのまま残し、他の部屋を作り直して提案させますか？（今の他の部屋は消えます）" : "玄関がまだ置かれていません。玄関の位置も含めて全部提案させますか？（先に玄関を置くと、その位置を守って提案します）")) runAi("generate"); }}>
+              残りを提案
             </button>
           </div>
+          <p className="text-[11px] text-slate-500">「残りを提案」は、あなたが置いた玄関（と階段）の位置・向きを固定して、他の部屋をAIが埋めます。</p>
           {msg && <div className={`text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
         </div>
 
@@ -464,6 +491,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             <b>{project.name}</b> 建物参考プラン（{building.structureLabel}）
           </div>
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={showSite} onChange={(e) => setShowSite(e.target.checked)} />敷地と道路を表示</label>
             <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={showFxLabels} onChange={(e) => setShowFxLabels(e.target.checked)} />建具の幅を表示</label>
             <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_${level}階.png`)}>この階をPNG</button>
             <button className="btn-ghost" onClick={() => allRef.current && downloadSvgAsPng(allRef.current, `${project.name}_間取り一式.png`, 2)}>全階まとめてPNG</button>
@@ -561,6 +589,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             onPointerDown={(e) => { wrapRef.current?.focus(); if (e.target === svgRef.current || (e.target as Element).getAttribute("data-bg") === "1") setSel(null); }}
           >
             <rect width={W} height={H} fill="#fff" data-bg="1" />
+            {showSite && <SiteContextSvg ctx={siteCtx} project={project} ox={ox} oy={oy} px={PX} flip={flip} canvas={{ w: W, h: H }} />}
             <FloorSvg
               floor={floor}
               project={project}
@@ -608,7 +637,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             <text x={ox} y={oy - 68} fontSize={16} fontWeight={700} fill="#222">
               {level}階　床面積 {round(floorArea(floor), 2)}㎡{balconyArea(floor) ? `（バルコニー ${round(balconyArea(floor), 2)}㎡ 別）` : ""}
             </text>
-            <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
+            <NorthMark x={W - 30} y={oy - 10} deg={northScreenDeg(project, "plan")} />
           </svg>
         </div>
 
@@ -637,6 +666,49 @@ function Stepper({ label, value, onMinus, onPlus }: { label: string; value: numb
       <span className="w-14 text-center font-medium tabular-nums">{Math.round(value * 1000).toLocaleString()}</span>
       <button className="h-6 w-6 rounded border border-slate-300 leading-none hover:bg-slate-50" onClick={onPlus}>＋</button>
     </span>
+  );
+}
+
+/** 敷地・道路を描くために建物の外側へ広げる余白（m、建物座標の左右上下） */
+function sitePadding(ctx: SiteContext, bw: number, bd: number, on: boolean) {
+  if (!on) return { l: 0, r: 0, t: 0, b: 0 };
+  const pts = [...ctx.site, ...ctx.roads.flatMap((r) => r.poly)];
+  const cap = (v: number) => Math.min(5, Math.max(0.6, v));
+  return {
+    l: cap(-Math.min(0, ...ctx.site.map((p) => p.x), ...ctx.roads.flatMap((r) => r.poly.map((p) => p.x)))),
+    r: cap(Math.max(bw, ...pts.map((p) => p.x)) - bw),
+    b: cap(-Math.min(0, ...pts.map((p) => p.y))),
+    t: cap(Math.max(bd, ...pts.map((p) => p.y)) - bd),
+  };
+}
+
+/** 間取り図の背景に敷地の形・離れ線・道路を薄く描く */
+export function SiteContextSvg({ ctx, project, ox, oy, px, flip, canvas, compact }: { ctx: SiteContext; project: Project; ox: number; oy: number; px: number; flip: boolean; canvas: { w: number; h: number }; compact?: boolean }) {
+  const b = project.building;
+  const toPx = (x: number, y: number) => (flip ? { x: ox + (b.w - x) * px, y: oy + y * px } : { x: ox + x * px, y: oy + (b.d - y) * px });
+  const pts = (poly: { x: number; y: number }[]) => poly.map((p) => { const q = toPx(p.x, p.y); return `${q.x},${q.y}`; }).join(" ");
+  const clipId = `sitectx-${Math.round(ox)}-${Math.round(oy)}-${px}`;
+  const fs = compact ? 8 : 11;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <defs>
+        <clipPath id={clipId}><rect x={8} y={compact ? 0 : 40} width={canvas.w - 16} height={canvas.h - (compact ? 0 : 48)} /></clipPath>
+      </defs>
+      <g clipPath={`url(#${clipId})`}>
+        {ctx.roads.map((r, i) => {
+          const m = toPx(r.mid.x, r.mid.y);
+          return (
+            <g key={"road" + i}>
+              <polygon points={pts(r.poly)} fill="#eceff3" stroke="#c9ced8" strokeWidth={1} />
+              <text x={m.x} y={m.y - 2} textAnchor="middle" fontSize={fs} fontWeight={600} fill="#555">道路 約{r.w.toFixed(1)}m</text>
+              {!compact && <text x={m.x} y={m.y + fs + 1} textAnchor="middle" fontSize={fs - 2} fill="#777">{r.label}</text>}
+            </g>
+          );
+        })}
+        <polygon points={pts(ctx.site)} fill="rgba(246,234,211,0.35)" stroke="#6b7280" strokeWidth={1.5} strokeLinejoin="round" />
+        {ctx.setback.length > 2 && <polygon points={pts(ctx.setback)} fill="none" stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 4" />}
+      </g>
+    </g>
   );
 }
 
@@ -1036,8 +1108,13 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
   function AllFloorsSvg({ project, summary, total, floorArea, balconyArea }, ref) {
     const b = project.building;
     const px = 42;
-    const cellW = b.w * px + 120;
-    const cellH = b.d * px + 150;
+    const ctx = siteInBuildingFrame(project.site, project.grid, project.site.fireproofException ? 0 : project.site.setback);
+    const pad = sitePadding(ctx, b.w, b.d, true);
+    const flip = !!project.grid?.flip;
+    const padL = (flip ? pad.r : pad.l) * px;
+    const padT = (flip ? pad.b : pad.t) * px;
+    const cellW = b.w * px + 120 + (pad.l + pad.r) * px;
+    const cellH = b.d * px + 150 + (pad.t + pad.b) * px;
     const cols = 2;
     const rows = Math.ceil((project.floors.length + 1) / cols);
     const W = cols * cellW + 40;
@@ -1058,10 +1135,13 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
               <text x={cx + 20} y={cy + 18} fontSize={14} fontWeight={700}>
                 {f.level}階　床面積 {round(floorArea(f), 2)}㎡{balconyArea(f) ? `（バルコニー ${round(balconyArea(f), 2)}㎡ 別）` : ""}
               </text>
-              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
-              <FloorSvg floor={f} project={project} ox={cx + 60} oy={cy + 80} px={px} compact flip={!!project.grid?.flip} />
-              <FixturesSvg fixtures={f.fixtures ?? []} project={project} ox={cx + 60} oy={cy + 80} px={px} flip={!!project.grid?.flip} compact />
-              <BuildingDims rooms={f.rooms} ox={cx + 60} oy={cy + 80} px={px} w={b.w} d={b.d} flip={!!project.grid?.flip} compact />
+              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={northScreenDeg(project, "plan")} />
+              <svg x={cx} y={cy + 30} width={cellW} height={cellH - 30} viewBox={`0 0 ${cellW} ${cellH - 30}`}>
+                <SiteContextSvg ctx={ctx} project={project} ox={60 + padL} oy={50 + padT} px={px} flip={flip} canvas={{ w: cellW, h: cellH - 30 }} compact />
+                <FloorSvg floor={f} project={project} ox={60 + padL} oy={50 + padT} px={px} compact flip={flip} />
+                <FixturesSvg fixtures={f.fixtures ?? []} project={project} ox={60 + padL} oy={50 + padT} px={px} flip={flip} compact />
+                <BuildingDims rooms={f.rooms} ox={60 + padL} oy={50 + padT} px={px} w={b.w} d={b.d} flip={flip} compact />
+              </svg>
             </g>
           );
         })}

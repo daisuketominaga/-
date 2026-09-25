@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Project, Pt, Site, SiteEdge } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { polygonArea, centroid, bbox, insetPolygon, dist, round } from "@/lib/geometry";
+import { polygonArea, centroid, bbox, insetPolygon, dist, round, northScreenDeg } from "@/lib/geometry";
 import { downloadSvgAsPng } from "@/lib/store";
 import SurveyImport from "./SurveyImport";
 
@@ -157,62 +157,40 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
               <span className="label">容積率 %</span>
               <input type="number" className="field" value={site.farRatio} onChange={(e) => setSite((s) => ({ ...s, farRatio: Number(e.target.value) }))} />
             </div>
-            <div>
-              <span className="label">北の向き（度）ふつうは 0</span>
-              <div className="flex gap-1">
-                <input type="number" step="1" className="field" value={site.northDeg} onChange={(e) => setSite((s) => ({ ...s, northDeg: Number(e.target.value) }))} />
-                {site.northDeg !== 0 && <button className="btn-ghost whitespace-nowrap px-2 text-xs" onClick={() => setSite((s) => ({ ...s, northDeg: 0 }))}>0に戻す</button>}
-              </div>
-              <span className="text-[10px] text-slate-400">図は座標のまま（上が北）。数字を入れると方位記号だけ回ります</span>
-            </div>
-            <div>
+            <div className="col-span-2">
               <span className="label">境界からの離れ m</span>
               <input type="number" step="0.1" className="field" value={site.setback} onChange={(e) => setSite((s) => ({ ...s, setback: Number(e.target.value) }))} />
             </div>
           </div>
-          <label className="flex items-start gap-2 text-xs">
-            <input type="checkbox" className="mt-0.5" checked={site.fireproofException} onChange={(e) => setSite((s) => ({ ...s, fireproofException: e.target.checked }))} />
-            <span>防火・準防火地域で外壁が耐火構造（建築基準法65条）。境界に接して建てられるため離れ線を出さない</span>
-          </label>
         </div>
 
         <div className="card space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">境界点と辺</h3>
-            <span className="text-[11px] text-slate-400">図の上で点をドラッグしても動かせます</span>
-          </div>
-          <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
-            {site.points.map((p, i) => {
-              const e = edgeOf(i);
-              const next = site.points[(i + 1) % site.points.length];
-              const calcLen = dist(p, next);
-              return (
-                <div key={i} className="rounded border border-slate-200 p-2 text-xs">
-                  <div className="flex items-center gap-1">
-                    <span className="w-8 font-semibold">P{i + 1}</span>
-                    <input type="number" step="0.01" className="field" value={p.x} onChange={(ev) => setSite((s) => ({ ...s, points: s.points.map((q, k) => (k === i ? { ...q, x: Number(ev.target.value) } : q)) }))} title="東西 m" />
-                    <input type="number" step="0.01" className="field" value={p.y} onChange={(ev) => setSite((s) => ({ ...s, points: s.points.map((q, k) => (k === i ? { ...q, y: Number(ev.target.value) } : q)) }))} title="南北 m" />
-                    <button className="btn-ghost px-2" title="この点の後に点を追加" onClick={() => addPoint(i)}>＋</button>
-                    <button className="btn-ghost px-2 text-red-500" title="この点を削除" onClick={() => removePoint(i)}>－</button>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1 pl-8">
-                    <span className="text-slate-500">辺 P{i + 1}→P{((i + 1) % site.points.length) + 1}</span>
-                    <input type="number" step="0.01" className="field w-20" value={e.length ?? ""} placeholder={round(calcLen, 2).toString()} onChange={(ev) => setEdge(i, { length: ev.target.value === "" ? undefined : Number(ev.target.value) })} title="測量図の辺長 m" />
-                    <label className="flex items-center gap-1">
-                      <input type="checkbox" checked={!!e.road} onChange={(ev) => setEdge(i, { road: ev.target.checked, roadWidth: e.roadWidth ?? 4, roadLabel: e.roadLabel ?? "公道" })} />
-                      道路
-                    </label>
-                    {e.road && (
-                      <>
-                        <input type="number" step="0.1" className="field w-16" value={e.roadWidth ?? 4} onChange={(ev) => setEdge(i, { roadWidth: Number(ev.target.value) })} title="幅員 m" />
-                        <input className="field w-32" value={e.roadLabel ?? ""} placeholder="法42条1項1号 公道" onChange={(ev) => setEdge(i, { roadLabel: ev.target.value })} />
-                      </>
-                    )}
-                    <input className="field w-24" value={e.note ?? ""} placeholder="メモ(NTT柱有)" onChange={(ev) => setEdge(i, { note: ev.target.value })} />
-                  </div>
-                </div>
-              );
-            })}
+          <h3 className="text-sm font-semibold">方位（ここで決めた向きが全画面に反映）</h3>
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            図は求積表の座標のまま描き、回転しません（ふつうは画面の上が北＝0度）。測量図の方位記号と違う場合だけ、ここで1度単位で直してください。敷地図・配置図・間取り図・立面図の方角がすべてこの値で揃います。
+          </p>
+          <div className="flex items-center gap-3">
+            <svg viewBox="-30 -30 60 60" className="h-20 w-20 shrink-0">
+              <circle r={26} fill="#fff" stroke="#333" strokeWidth={1} />
+              {[0, 90, 180, 270].map((a) => <line key={a} x1={0} y1={-26} x2={0} y2={-22} stroke="#999" transform={`rotate(${a})`} />)}
+              <g transform={`rotate(${northScreenDeg(project, "site")})`}>
+                <polygon points="0,-20 7,6 0,2 -7,6" fill="#111" />
+                <polygon points="0,-20 7,6 0,2" fill="#fff" stroke="#111" strokeWidth={0.5} />
+              </g>
+              {(() => { const r = (northScreenDeg(project, "site") * Math.PI) / 180; return <text x={Math.sin(r) * 23} y={-Math.cos(r) * 23 + 2.5} textAnchor="middle" fontSize={7} fontWeight={700}>N</text>; })()}
+            </svg>
+            <div className="flex-1 space-y-1">
+              <input type="range" min={0} max={359} step={1} className="w-full" value={northScreenDeg(project, "site")} onChange={(e) => setSite((s) => ({ ...s, northDeg: Number(e.target.value) }))} />
+              <div className="flex flex-wrap items-center gap-1 text-xs">
+                <button className="btn-ghost px-2 py-0.5" onClick={() => setSite((s) => ({ ...s, northDeg: (((s.northDeg - 1) % 360) + 360) % 360 }))}>−1°</button>
+                <input type="number" step="1" className="field w-20 py-0.5" value={northScreenDeg(project, "site")} onChange={(e) => setSite((s) => ({ ...s, northDeg: ((Number(e.target.value) % 360) + 360) % 360 }))} />
+                <span>度</span>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => setSite((s) => ({ ...s, northDeg: (s.northDeg + 1) % 360 }))}>＋1°</button>
+                {[0, 90, 180, 270].map((a) => (
+                  <button key={a} className={`rounded border px-1.5 py-0.5 ${northScreenDeg(project, "site") === a ? "border-brand-600 bg-brand-50" : "border-slate-300"}`} onClick={() => setSite((s) => ({ ...s, northDeg: a }))}>{a === 0 ? "上が北" : a === 90 ? "右が北" : a === 180 ? "下が北" : "左が北"}</button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -409,11 +387,11 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
             {/* 方位（図は回さず、矢印だけ北の向きへ回す） */}
             <g transform={`translate(${W - 50} 50)`}>
               <circle r={22} fill="#fff" stroke="#333" strokeWidth={1} />
-              <g transform={`rotate(${site.northDeg})`}>
+              <g transform={`rotate(${northScreenDeg(project, "site")})`}>
                 <polygon points="0,-18 7,6 0,2 -7,6" fill="#111" />
                 <polygon points="0,-18 7,6 0,2" fill="#fff" stroke="#111" strokeWidth={0.5} />
               </g>
-              {(() => { const r = (site.northDeg * Math.PI) / 180; return <text x={Math.sin(r) * 30} y={-Math.cos(r) * 30 + 5} textAnchor="middle" fontSize={14} fontWeight={700}>N</text>; })()}
+              {(() => { const r = (northScreenDeg(project, "site") * Math.PI) / 180; return <text x={Math.sin(r) * 30} y={-Math.cos(r) * 30 + 5} textAnchor="middle" fontSize={14} fontWeight={700}>N</text>; })()}
             </g>
           </svg>
         </div>

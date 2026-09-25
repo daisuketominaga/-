@@ -3,8 +3,8 @@
 import { useMemo, useRef } from "react";
 import type { Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, polygonArea, dist } from "@/lib/geometry";
-import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, rectFits, modules, clearances } from "@/lib/grid";
+import { insetPolygon, round, polygonArea, northScreenDeg } from "@/lib/geometry";
+import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, rectFits, modules, clearances, roadBands } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -29,30 +29,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
 
   // 道路帯（底辺座標）
   const roadW = Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4));
-  const roads = site.edges
-    .filter((e) => e.road && e.index < site.points.length)
-    .map((e) => {
-      const a = site.points[e.index];
-      const b = site.points[(e.index + 1) % site.points.length];
-      const w = e.roadWidth ?? 4;
-      const dx = (b.x - a.x) / (dist(a, b) || 1);
-      const dy = (b.y - a.y) / (dist(a, b) || 1);
-      // 外向き法線: 敷地の重心から遠ざかる向き
-      const cx = site.points.reduce((s, p) => s + p.x, 0) / site.points.length;
-      const cy = site.points.reduce((s, p) => s + p.y, 0) / site.points.length;
-      let nx = dy, ny = -dx;
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      if ((mx + nx - cx) ** 2 + (my + ny - cy) ** 2 < (mx - cx) ** 2 + (my - cy) ** 2) { nx = -nx; ny = -ny; }
-      const ext = 6;
-      const poly = [
-        { x: a.x - dx * ext, y: a.y - dy * ext },
-        { x: b.x + dx * ext, y: b.y + dy * ext },
-        { x: b.x + dx * ext + nx * w, y: b.y + dy * ext + ny * w },
-        { x: a.x - dx * ext + nx * w, y: a.y - dy * ext + ny * w },
-      ].map((p) => toLocal(frame, p));
-      const mid = toLocal(frame, { x: mx + nx * (w / 2), y: my + ny * (w / 2) });
-      return { poly, mid, w, label: e.roadLabel ?? "公道" };
-    });
+  const roads = roadBands(site, frame, 6);
 
   const allU = [...loc.map((p) => p.x), ...roads.flatMap((r) => r.poly.map((p) => p.x))];
   const allV = [...loc.map((p) => p.y), ...roads.flatMap((r) => r.poly.map((p) => p.y))];
@@ -73,11 +50,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const coverage = (bArea / area) * 100;
   const cl = clearances(site, grid, building.w, building.d);
 
-  // 北の向き（底辺座標での角度、上から時計回り）
-  const nd = (site.northDeg * Math.PI) / 180;
-  const northWorld = { x: Math.sin(nd), y: Math.cos(nd) };
-  const nLocal = { x: northWorld.x * frame.t.x + northWorld.y * frame.t.y, y: northWorld.x * frame.n.x + northWorld.y * frame.n.y };
-  const northLocalDeg = (Math.atan2(nLocal.x, nLocal.y) * 180) / Math.PI + (flip ? 180 : 0);
+  // 北の向き（画面上、上から時計回り）。敷地図で決めた1つの値から計算
+  const northLocalDeg = northScreenDeg(project, "plan");
 
   const apply = (patch: { u?: number; v?: number; w?: number; d?: number; baseEdge?: number; flip?: boolean }) =>
     setProject((p) => {
@@ -158,12 +132,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             反転（180度回して、底辺を画面の上にする）
           </label>
           <div className="rounded bg-slate-50 p-2 text-[11px] leading-relaxed text-slate-600">
-            北は、求積表の座標をそのまま描いた向き（敷地図の画面上）を基準にしています。方位記号は、この画面の回転に合わせて回ります。
-            <div className="mt-1 flex items-center gap-1">
-              <span>ずれている場合だけ補正:</span>
-              <input type="number" step="1" className="field w-20" value={site.northDeg} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, northDeg: Number(e.target.value) } }))} />
-              <span>度</span>
-            </div>
+            方位記号は「敷地図」画面の「方位」で決めた向き（現在 {northScreenDeg(project, "site")}度）を、この画面の回転・反転に合わせて回しています。直すときは敷地図で。
           </div>
         </div>
 
