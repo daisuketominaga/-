@@ -83,6 +83,63 @@ export type RoomType =
   | "other";
 
 export type StairDir = "up" | "down" | "left" | "right";
+/** 階段の形: 直階段 / 回り階段（折り返し・1坪） / かね折れ */
+export type StairKind = "straight" | "u_turn" | "l_turn";
+/** 曲がる向き（上る人から見て） */
+export type TurnSide = "left" | "right";
+
+export type FixtureKind =
+  | "door_single" // 片開きドア（室内）
+  | "door_entrance" // 玄関 片開き
+  | "door_parent_child" // 玄関 親子ドア
+  | "sliding_single" // 片引き戸
+  | "sliding_double" // 引違い戸
+  | "folding" // 折れ戸（クローゼット）
+  | "window" // 腰窓
+  | "window_terrace" // 掃き出し窓
+  | "window_small" // 小窓
+  | "opening"; // 開口（建具なし）
+
+/** 建具。壁の上に置く。(x, y) は開口の始点（建物の左下を原点、m）、along は壁の向き */
+export type Fixture = {
+  id: string;
+  kind: FixtureKind;
+  x: number;
+  y: number;
+  along: "h" | "v";
+  width: number;
+  /** 開き戸: 吊元（開口の始点側 start / 終点側 end） */
+  hinge?: "start" | "end";
+  /** 開き戸: 開く側（壁の法線の正側 plus = 上/右、負側 minus = 下/左） */
+  swing?: "plus" | "minus";
+};
+
+export const FIXTURE_LABEL: Record<FixtureKind, string> = {
+  door_single: "片開きドア",
+  door_entrance: "玄関ドア",
+  door_parent_child: "親子ドア",
+  sliding_single: "片引き戸",
+  sliding_double: "引違い戸",
+  folding: "折れ戸",
+  window: "腰窓",
+  window_terrace: "掃き出し窓",
+  window_small: "小窓",
+  opening: "開口",
+};
+
+/** 一般的な戸建の標準幅（m）。室内建具はLIXILラシッサ、玄関はジエスタ2、窓はサッシ呼称の規格を参考 */
+export const FIXTURE_DEFAULT_WIDTH: Record<FixtureKind, number> = {
+  door_single: 0.78,
+  door_entrance: 0.924,
+  door_parent_child: 1.24,
+  sliding_single: 1.644,
+  sliding_double: 1.644,
+  folding: 1.644,
+  window: 1.69,
+  window_terrace: 1.69,
+  window_small: 0.64,
+  opening: 0.91,
+};
 
 export type Room = {
   id: string;
@@ -90,6 +147,10 @@ export type Room = {
   type: RoomType;
   /** 階段: 上っていく向き（建物の底辺基準。up=奥へ, down=底辺側へ, left, right） */
   dir?: StairDir;
+  /** 階段の形 */
+  stairKind?: StairKind;
+  /** 回り・かね折れ階段の曲がる向き */
+  turn?: TurnSide;
   /** 建物外形の左下角を原点とした位置（m） */
   x: number;
   y: number;
@@ -100,6 +161,7 @@ export type Room = {
 export type Floor = {
   level: number;
   rooms: Room[];
+  fixtures?: Fixture[];
 };
 
 export type Face = "N" | "S" | "E" | "W";

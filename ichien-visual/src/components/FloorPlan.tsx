@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Project, Room, RoomType, Floor, StairDir } from "@/lib/types";
-import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
+import type { Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
+import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { clearances } from "@/lib/grid";
@@ -15,6 +15,7 @@ type Props = {
 const PX = 60; // px per m
 const snap = (v: number) => Math.round(v / HALF) * HALF;
 
+const FIXTURE_KINDS: FixtureKind[] = ["door_single", "sliding_single", "sliding_double", "folding", "door_entrance", "door_parent_child", "window", "window_terrace", "window_small", "opening"];
 const ROOM_TYPES: RoomType[] = ["ldk", "living", "kitchen", "bedroom", "japanese", "study", "entrance", "hall", "toilet", "bath", "washroom", "closet", "storage", "stairs", "garage", "balcony", "other"];
 
 export default function FloorPlan({ project, setProject }: Props) {
@@ -29,15 +30,18 @@ export default function FloorPlan({ project, setProject }: Props) {
   const allRef = useRef<SVGSVGElement>(null);
   /** 一覧からドラッグ中の部屋 */
   const [placing, setPlacing] = useState<{ type: RoomType; w: number; d: number } | null>(null);
+  const [placingFx, setPlacingFx] = useState<FixtureKind | null>(null);
+  const [selFx, setSelFx] = useState<string | null>(null);
+  const [dragFx, setDragFx] = useState<{ id: string; ox: number; oy: number; sx: number; sy: number } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
   const placingRef = useRef(placing);
   placingRef.current = placing;
   useEffect(() => {
-    if (!placing) return;
-    const up = () => setTimeout(() => { setPlacing(null); setGhost(null); }, 0);
+    if (!placing && !placingFx) return;
+    const up = () => setTimeout(() => { setPlacing(null); setPlacingFx(null); setGhost(null); }, 0);
     window.addEventListener("pointerup", up);
     return () => window.removeEventListener("pointerup", up);
-  }, [placing]);
+  }, [placing, placingFx]);
 
   const floor: Floor = project.floors.find((f) => f.level === level) ?? { level, rooms: [] };
   const setFloor = (u: (f: Floor) => Floor) =>
@@ -47,6 +51,15 @@ export default function FloorPlan({ project, setProject }: Props) {
       return { ...p, floors: floors.sort((a, b) => a.level - b.level) };
     });
   const updateRoom = (id: string, patch: Partial<Room>) => setFloor((f) => ({ ...f, rooms: f.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  const fixtures: Fixture[] = floor.fixtures ?? [];
+  const updateFx = (id: string, patch: Partial<Fixture>) => setFloor((f) => ({ ...f, fixtures: (f.fixtures ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  const addFx = (kind: FixtureKind, at: { x: number; y: number }) => {
+    const width = FIXTURE_DEFAULT_WIDTH[kind];
+    const fx: Fixture = { id: uid(), kind, x: Math.max(0, Math.min(building.w, snap(at.x))), y: Math.max(0, Math.min(building.d, snap(at.y))), along: "h", width, hinge: "start", swing: "plus" };
+    setFloor((f) => ({ ...f, fixtures: [...(f.fixtures ?? []), fx] }));
+    setSelFx(fx.id);
+    setSel(null);
+  };
 
   const flip = !!project.grid?.flip;
   const cl = clearances(project.site, project.grid, building.w, building.d);
@@ -72,6 +85,16 @@ export default function FloorPlan({ project, setProject }: Props) {
   });
 
   const onMove = (e: React.PointerEvent) => {
+    if (placingFx) {
+      const p = localOf(e);
+      setGhost({ x: snap(p.x), y: snap(p.y) });
+      return;
+    }
+    if (dragFx) {
+      const p = localOf(e);
+      updateFx(dragFx.id, { x: Math.max(0, Math.min(building.w, snap(dragFx.ox + p.x - dragFx.sx))), y: Math.max(0, Math.min(building.d, snap(dragFx.oy + p.y - dragFx.sy))) });
+      return;
+    }
     if (placing) {
       const p = localOf(e);
       setGhost(clampPos(p.x - placing.w / 2, p.y - placing.d / 2, placing.w, placing.d));
@@ -148,7 +171,7 @@ export default function FloorPlan({ project, setProject }: Props) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "失敗しました");
-      setProject((p) => ({ ...p, floors: json.floors }));
+      setProject((p) => ({ ...p, floors: (json.floors as Floor[]).map((f) => ({ ...f, fixtures: p.floors.find((x) => x.level === f.level)?.fixtures ?? [] })) }));
       setMsg(json.notes || "更新しました");
       setInstruction("");
     } catch (e) {
@@ -208,6 +231,42 @@ export default function FloorPlan({ project, setProject }: Props) {
               </button>
             ))}
           </div>
+          <p className="mt-2 text-[11px] text-slate-500">建具も同じくドラッグで壁の上へ。置いた後に向き・吊元・開く側を変えられます。</p>
+          <div className="flex flex-wrap gap-1">
+            {FIXTURE_KINDS.map((k) => (
+              <button
+                key={k}
+                className="touch-none cursor-grab rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] shadow-sm hover:bg-slate-50"
+                onPointerDown={(e) => { e.preventDefault(); setPlacingFx(k); }}
+                onClick={() => { if (!ghost) addFx(k, { x: 0, y: 0 }); }}
+                title={`標準幅 ${Math.round(FIXTURE_DEFAULT_WIDTH[k] * 1000)}mm`}
+              >
+                ＋{FIXTURE_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          {fixtures.length > 0 && (
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-slate-100 p-1">
+              {fixtures.map((fx) => (
+                <div key={fx.id} className={`rounded border p-1 text-[11px] ${selFx === fx.id ? "border-brand-600 bg-brand-50" : "border-slate-200"}`} onClick={() => { setSelFx(fx.id); setSel(null); }}>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <select className="field w-auto px-1 py-0" value={fx.kind} onChange={(e) => updateFx(fx.id, { kind: e.target.value as FixtureKind, width: FIXTURE_DEFAULT_WIDTH[e.target.value as FixtureKind] })}>
+                      {FIXTURE_KINDS.map((k) => <option key={k} value={k}>{FIXTURE_LABEL[k]}</option>)}
+                    </select>
+                    <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); updateFx(fx.id, { along: fx.along === "h" ? "v" : "h" }); }}>{fx.along === "h" ? "横壁" : "縦壁"}</button>
+                    {(fx.kind === "door_single" || fx.kind === "door_entrance" || fx.kind === "door_parent_child") && (
+                      <>
+                        <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); updateFx(fx.id, { hinge: fx.hinge === "end" ? "start" : "end" }); }}>吊元{fx.along === "h" ? (fx.hinge === "end" ? "右" : "左") : (fx.hinge === "end" ? "上" : "下")}</button>
+                        <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); updateFx(fx.id, { swing: fx.swing === "minus" ? "plus" : "minus" }); }}>開き{fx.along === "h" ? (fx.swing === "minus" ? "↓" : "↑") : (fx.swing === "minus" ? "←" : "→")}</button>
+                      </>
+                    )}
+                    <label className="flex items-center gap-0.5"><span className="text-slate-400">幅</span><input type="number" step="0.01" className="field w-16 px-1 py-0" value={fx.width} onChange={(e) => updateFx(fx.id, { width: Number(e.target.value) })} /></label>
+                    <button className="px-1 text-red-500" onClick={(e) => { e.stopPropagation(); setFloor((f) => ({ ...f, fixtures: (f.fixtures ?? []).filter((x) => x.id !== fx.id) })); }}>✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="max-h-64 space-y-1 overflow-y-auto">
             {floor.rooms.map((r) => (
               <div key={r.id} className={`rounded border p-1.5 text-xs ${sel === r.id ? "border-brand-600 bg-brand-50" : "border-slate-200"}`} onClick={() => setSel(r.id)}>
@@ -231,7 +290,18 @@ export default function FloorPlan({ project, setProject }: Props) {
                   <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); rotateRoom(r.id); }}>↻ 90°回す</button>
                   {r.type === "stairs" && (
                     <>
-                      <span>上る向き</span>
+                      <select className="field w-auto px-1 py-0" value={r.stairKind ?? "straight"} onChange={(e) => { const k = e.target.value as StairKind; const size = k === "straight" ? { w: 0.91, d: 2.73 } : { w: 1.82, d: 1.82 }; updateRoom(r.id, { stairKind: k, ...size, turn: r.turn ?? "left" }); }}>
+                        <option value="straight">直階段</option>
+                        <option value="u_turn">回り階段（1820×1820）</option>
+                        <option value="l_turn">かね折れ階段</option>
+                      </select>
+                      {(r.stairKind === "u_turn" || r.stairKind === "l_turn") && (
+                        <select className="field w-auto px-1 py-0" value={r.turn ?? "left"} onChange={(e) => updateRoom(r.id, { turn: e.target.value as TurnSide })}>
+                          <option value="left">左に曲がる</option>
+                          <option value="right">右に曲がる</option>
+                        </select>
+                      )}
+                      <span>上り始めの向き</span>
                       <select className="field w-auto px-1 py-0" value={r.dir ?? "up"} onChange={(e) => updateRoom(r.id, { dir: e.target.value as StairDir })}>
                         <option value="up">奥へ（上）</option>
                         <option value="down">底辺側へ（下）</option>
@@ -292,19 +362,31 @@ export default function FloorPlan({ project, setProject }: Props) {
             onPointerMove={onMove}
             onPointerUp={(e) => {
               setDrag(null);
-              if (placing) {
+              setDragFx(null);
+              if (placingFx) {
+                const p = localOf(e);
+                addFx(placingFx, { x: p.x, y: p.y });
+                setPlacingFx(null);
+                setGhost(null);
+              } else if (placing) {
                 const p = localOf(e);
                 addRoom(placing.type, { x: p.x - placing.w / 2, y: p.y - placing.d / 2 });
                 setPlacing(null);
                 setGhost(null);
               }
             }}
-            onPointerLeave={() => { setDrag(null); setGhost(null); }}
-            onPointerDown={(e) => { if (e.target === svgRef.current) setSel(null); }}
+            onPointerLeave={() => { setDrag(null); setDragFx(null); setGhost(null); }}
+            onPointerDown={(e) => { if (e.target === svgRef.current) { setSel(null); setSelFx(null); } }}
           >
             <rect width={W} height={H} fill="#fff" />
             <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} flip={flip} level={level} onStartDrag={(r, mode, e) => { if (mode === "resize" && flip) return; const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
+            <FixturesSvg fixtures={fixtures} project={project} ox={ox} oy={oy} px={PX} flip={flip} sel={selFx} onSelect={(id) => { setSelFx(id); setSel(null); }} onStartDrag={(fx, e) => { const p = localOf(e); setDragFx({ id: fx.id, ox: fx.x, oy: fx.y, sx: p.x, sy: p.y }); }} />
             {level === 1 && <BoundaryDims cl={cl} ox={ox} oy={oy} px={PX} w={building.w} d={building.d} flip={flip} roadSide="bottom" />}
+            {placingFx && ghost && (() => {
+              const gx = flip ? ox + (building.w - ghost.x) * PX : ox + ghost.x * PX;
+              const gy = flip ? oy + ghost.y * PX : oy + (building.d - ghost.y) * PX;
+              return <circle cx={gx} cy={gy} r={7} fill="#2f6fed" fillOpacity={0.5} style={{ pointerEvents: "none" }} />;
+            })()}
             {placing && ghost && (() => {
               const gx = flip ? ox + (building.w - ghost.x - placing.w) * PX : ox + ghost.x * PX;
               const gy = flip ? oy + ghost.y * PX : oy + (building.d - ghost.y - placing.d) * PX;
@@ -412,7 +494,7 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
         return (
           <g key={r.id} onPointerDown={(e) => { e.stopPropagation(); onSelect?.(r.id); onStartDrag?.(r, "move", e); }} className={onStartDrag ? "cursor-move" : ""}>
             <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
-            {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} dir={r.dir ?? "up"} flip={!!flip} showUp={lv < topFloor} showDown={lv > 1} compact={compact} />}
+            {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} dir={r.dir ?? "up"} flip={!!flip} showUp={lv < topFloor} showDown={lv > 1} compact={compact} kind={r.stairKind ?? "straight"} turn={r.turn ?? "left"} />}
             {r.type === "stairs" ? (
               <text x={p.x + 4} y={p.y + (compact ? 9 : 12)} fontSize={compact ? 8 : 10} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={2} paintOrder="stroke">
                 {r.name}
@@ -479,48 +561,190 @@ export function BoundaryDims({ cl, ox, oy, px, w, d, flip, compact }: { cl: { bo
   );
 }
 
-/** 階段: 段の線は進行方向に直交、UP/DN の矢印を向きに合わせて描く */
-function StairLines({ x, y, w, h, px, dir, flip, showUp, showDown, compact }: { x: number; y: number; w: number; h: number; px: number; dir: StairDir; flip: boolean; showUp: boolean; showDown: boolean; compact?: boolean }) {
-  // 建物基準の向き → 画面上の向き（反転時は上下左右が逆）
+/** 階段: 直階段 / 回り階段（1坪・折り返し） / かね折れ。段の線と UP/DN の矢印 */
+function StairLines({ x, y, w, h, px, dir, flip, showUp, showDown, compact, kind, turn }: { x: number; y: number; w: number; h: number; px: number; dir: StairDir; flip: boolean; showUp: boolean; showDown: boolean; compact?: boolean; kind: StairKind; turn: TurnSide }) {
+  // 建物基準の向き → 画面上の向き（反転時は上下左右が逆）。反転時は左右の曲がりも逆
   const screenDir: StairDir = flip ? ({ up: "down", down: "up", left: "right", right: "left" } as const)[dir] : dir;
-  const vertical = screenDir === "up" || screenDir === "down";
-  const stepPitch = 0.23 * px;
-  const n = Math.max(4, Math.floor((vertical ? h : w) / stepPitch));
+  const screenTurn: TurnSide = flip ? (turn === "left" ? "right" : "left") : turn;
+  const fs = compact ? 7 : 9;
+  // 画面座標系で「進行方向 f」と「左方向 l」の単位ベクトル
+  const F = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[screenDir];
   const cx = x + w / 2;
   const cy = y + h / 2;
-  // 矢印: UP は screenDir へ、DN はその逆
-  const vec = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[screenDir];
-  const len = (vertical ? h : w) * 0.7;
-  const arrow = (sign: 1 | -1, label: string, offset: number) => {
-    const ax = cx + (vertical ? offset : 0);
-    const ay = cy + (vertical ? 0 : offset);
-    const x1 = ax - (vec[0] * sign * len) / 2;
-    const y1 = ay - (vec[1] * sign * len) / 2;
-    const x2 = ax + (vec[0] * sign * len) / 2;
-    const y2 = ay + (vec[1] * sign * len) / 2;
-    const ang = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  const pitch = 0.23 * px;
+  const label = (tx: number, ty: number, text: string) => (
+    <text x={tx} y={ty + 3} textAnchor="middle" fontSize={fs} fontWeight={700} fill="#c0392b" stroke="#fff" strokeWidth={2} paintOrder="stroke">{text}</text>
+  );
+  const head = (x2: number, y2: number, vx: number, vy: number) => {
+    const ang = (Math.atan2(vy, vx) * 180) / Math.PI;
+    return <polygon points={`${x2},${y2} ${x2 - 7},${y2 - 3.5} ${x2 - 7},${y2 + 3.5}`} fill="#c0392b" transform={`rotate(${ang} ${x2} ${y2})`} />;
+  };
+  const stepsBetween = (ax: number, ay: number, bx: number, by: number, halfLen: number) => {
+    // a→b の線分上に、進行方向と直交する段の線を等間隔で引く
+    const len = Math.hypot(bx - ax, by - ay);
+    const n = Math.max(2, Math.floor(len / pitch));
+    const ux = (bx - ax) / len, uy = (by - ay) / len;
+    const nx = -uy, ny = ux;
+    return Array.from({ length: n }, (_, i) => {
+      const t = (i + 0.5) / n;
+      const mx = ax + (bx - ax) * t, my = ay + (by - ay) * t;
+      return <line key={i} x1={mx - nx * halfLen} y1={my - ny * halfLen} x2={mx + nx * halfLen} y2={my + ny * halfLen} stroke="#666" strokeWidth={0.8} />;
+    });
+  };
+
+  if (kind === "straight") {
+    const vertical = screenDir === "up" || screenDir === "down";
+    const len = (vertical ? h : w) * 0.7;
+    const off = (vertical ? w : h) * 0.22;
+    const arrow = (sign: 1 | -1, text: string, offset: number) => {
+      const ax = cx + (vertical ? offset : 0), ay = cy + (vertical ? 0 : offset);
+      const x1 = ax - (F[0] * sign * len) / 2, y1 = ay - (F[1] * sign * len) / 2;
+      const x2 = ax + (F[0] * sign * len) / 2, y2 = ay + (F[1] * sign * len) / 2;
+      return (
+        <g key={text}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c0392b" strokeWidth={1.2} />
+          {head(x2, y2, x2 - x1, y2 - y1)}
+          {label(x1 - F[0] * sign * 8, y1 - F[1] * sign * 8, text)}
+        </g>
+      );
+    };
     return (
-      <g key={label}>
-        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c0392b" strokeWidth={1.2} />
-        <polygon points={`${x2},${y2} ${x2 - 7},${y2 - 3.5} ${x2 - 7},${y2 + 3.5}`} fill="#c0392b" transform={`rotate(${ang} ${x2} ${y2})`} />
-        <text x={x1 - vec[0] * sign * 8} y={y1 - vec[1] * sign * 8 + 3} textAnchor="middle" fontSize={compact ? 7 : 9} fontWeight={700} fill="#c0392b" stroke="#fff" strokeWidth={2} paintOrder="stroke">{label}</text>
+      <g>
+        {vertical ? stepsBetween(cx, y, cx, y + h, w / 2) : stepsBetween(x, cy, x + w, cy, h / 2)}
+        {showUp && arrow(1, "UP", showDown ? -off : 0)}
+        {showDown && arrow(-1, "DN", showUp ? off : 0)}
       </g>
     );
-  };
-  const off = (vertical ? w : h) * 0.22;
+  }
+
+  // ===== 回り / かね折れ =====
+  // ローカル座標: 中心を原点、第1直進部は「上」へ、曲がりは「左」。dir と turn は transform で与える
+  const angle = { up: 0, right: 90, down: 180, left: 270 }[screenDir];
+  const mirror = screenTurn === "left" ? 1 : -1;
+  const LW = screenDir === "up" || screenDir === "down" ? w : h; // 進行方向に直交する幅
+  const LH = screenDir === "up" || screenDir === "down" ? h : w; // 進行方向の長さ
+  const col = LW / 2; // 1列の幅
+  const Py = -LH / 2 + col; // 回り部分の内側の角（ピボット）の y
+  const clipId = `stclip-${Math.round(x)}-${Math.round(y)}`;
+  const upright = (tx: number, ty: number, text: string) => (
+    <g transform={`translate(${tx} ${ty}) scale(${mirror} 1) rotate(${-angle})`}>{label(0, 0, text)}</g>
+  );
+  const items: React.ReactNode[] = [];
+  // 第1直進部（右の列、下→上）
+  items.push(...stepsBetween(col / 2, LH / 2, col / 2, Py, col / 2).map((el, i) => <g key={"a" + i}>{el}</g>));
+  // 回り部分（ピボットを中心に扇形）
+  const fanN = kind === "u_turn" ? 6 : 3;
+  const a0 = 0; // 右向き
+  const a1 = kind === "u_turn" ? -180 : -90; // 左向き / 上向き
+  for (let i = 0; i <= fanN; i++) {
+    const a = ((a0 + ((a1 - a0) * i) / fanN) * Math.PI) / 180;
+    items.push(<line key={"f" + i} x1={0} y1={Py} x2={Math.cos(a) * LW * 1.5} y2={Py + Math.sin(a) * LW * 1.5} stroke="#666" strokeWidth={0.8} clipPath={`url(#${clipId})`} />);
+  }
+  // 第2直進部
+  let endX = 0, endY = 0, endVx = 0, endVy = 0;
+  if (kind === "u_turn") {
+    items.push(...stepsBetween(-col / 2, Py, -col / 2, LH / 2, col / 2).map((el, i) => <g key={"b" + i}>{el}</g>));
+    endX = -col / 2; endY = LH / 2 - 6; endVx = 0; endVy = 1;
+  } else {
+    // かね折れ: 上の段を左へ
+    items.push(...stepsBetween(0, Py - col / 2, -LW / 2, Py - col / 2, col / 2).map((el, i) => <g key={"b" + i}>{el}</g>));
+    endX = -LW / 2 + 6; endY = Py - col / 2; endVx = -1; endVy = 0;
+  }
+  const sx = col / 2, sy = LH / 2 - 6;
+  const path = kind === "u_turn"
+    ? `M ${sx} ${sy} L ${sx} ${Py} A ${col / 2} ${col / 2} 0 0 0 ${-col / 2} ${Py} L ${endX} ${endY}`
+    : `M ${sx} ${sy} L ${sx} ${Py} A ${col / 2} ${col / 2} 0 0 0 ${0} ${Py - col / 2} L ${endX} ${endY}`;
+  return (
+    <g transform={`translate(${cx} ${cy}) rotate(${angle}) scale(${mirror} 1)`}>
+      <defs>
+        <clipPath id={clipId}><rect x={-LW / 2} y={-LH / 2} width={LW} height={LH} /></clipPath>
+      </defs>
+      <line x1={0} y1={Py} x2={0} y2={LH / 2} stroke="#444" strokeWidth={1} />
+      {items}
+      {(showUp || showDown) && <path d={path} fill="none" stroke="#c0392b" strokeWidth={1.2} />}
+      {showUp && head(endX, endY, endVx, endVy)}
+      {showUp && upright(sx, sy + 8, "UP")}
+      {showDown && !showUp && head(sx, sy, 0, 1)}
+      {showDown && upright(endX + endVx * 8, endY + (kind === "u_turn" ? 8 : endVy * 8), "DN")}
+    </g>
+  );
+}
+
+/** 建具の描画。壁の上に開口を白で抜き、種類ごとの記号を描く */
+export function FixturesSvg({ fixtures, project, ox, oy, px, flip, sel, onSelect, onStartDrag, compact }: { fixtures: Fixture[]; project: Project; ox: number; oy: number; px: number; flip: boolean; sel?: string | null; onSelect?: (id: string) => void; onStartDrag?: (fx: Fixture, e: React.PointerEvent) => void; compact?: boolean }) {
+  const b = project.building;
+  const toPx = (x: number, y: number) => (flip ? { x: ox + (b.w - x) * px, y: oy + y * px } : { x: ox + x * px, y: oy + (b.d - y) * px });
+  const wallT = compact ? 5 : 8;
   return (
     <g>
-      <g stroke="#666" strokeWidth={0.8}>
-        {Array.from({ length: n }, (_, i) =>
-          vertical ? (
-            <line key={i} x1={x} y1={y + ((i + 1) * h) / (n + 1)} x2={x + w} y2={y + ((i + 1) * h) / (n + 1)} />
-          ) : (
-            <line key={i} x1={x + ((i + 1) * w) / (n + 1)} y1={y} x2={x + ((i + 1) * w) / (n + 1)} y2={y + h} />
-          )
-        )}
-      </g>
-      {showUp && arrow(1, "UP", showDown ? -off : 0)}
-      {showDown && arrow(-1, "DN", showUp ? off : 0)}
+      {fixtures.map((fx) => {
+        const isSel = sel === fx.id;
+        const p0 = toPx(fx.x, fx.y);
+        // 壁に沿った単位ベクトル（画面）と法線（plus 側 = 建物座標で +y / +x）
+        const alongV = fx.along === "h" ? (flip ? [-1, 0] : [1, 0]) : (flip ? [0, 1] : [0, -1]);
+        const normV = fx.along === "h" ? (flip ? [0, 1] : [0, -1]) : (flip ? [-1, 0] : [1, 0]);
+        const W = fx.width * px;
+        const p1 = { x: p0.x + alongV[0] * W, y: p0.y + alongV[1] * W };
+        const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+        const rot = (Math.atan2(alongV[1], alongV[0]) * 180) / Math.PI;
+        const isDoor = fx.kind === "door_single" || fx.kind === "door_entrance" || fx.kind === "door_parent_child";
+        const sw = fx.swing === "minus" ? -1 : 1;
+        // グループ内の「上」（local -y）は、壁に沿った向きの左手側。plus 側がそれと一致するかで符号を決める
+        const leftV = [alongV[1], -alongV[0]];
+        const plusIsUp = leftV[0] * normV[0] + leftV[1] * normV[1] > 0;
+        const ny = plusIsUp ? -sw : sw; // 開く側（local）: -1 = 上, +1 = 下
+        const hingeAtEnd = fx.hinge === "end";
+        const children: React.ReactNode[] = [];
+        // 開口（壁を白で抜く）
+        children.push(<rect key="gap" x={-W / 2} y={-wallT / 2} width={W} height={wallT} fill="#fff" />);
+        if (isDoor) {
+          const leafW = fx.kind === "door_parent_child" ? W * 0.66 : W;
+          const hx = hingeAtEnd ? W / 2 : -W / 2; // 吊元
+          const dirX = hingeAtEnd ? -1 : 1; // 開口の方向
+          // 扉の線（壁に直交して開いた状態）と1/4円
+          children.push(<line key="leaf" x1={hx} y1={0} x2={hx} y2={ny * leafW} stroke="#222" strokeWidth={1.5} />);
+          const ex = hx + dirX * leafW, ey = 0;
+          const sweep = (dirX * ny) > 0 ? 0 : 1;
+          children.push(<path key="arc" d={`M ${hx} ${ny * leafW} A ${leafW} ${leafW} 0 0 ${sweep} ${ex} ${ey}`} fill="none" stroke="#555" strokeWidth={0.8} strokeDasharray="3 2" />);
+          if (fx.kind === "door_parent_child") {
+            const cx2 = hingeAtEnd ? -W / 2 : W / 2;
+            children.push(<line key="child" x1={cx2} y1={0} x2={cx2} y2={ny * (W - leafW)} stroke="#222" strokeWidth={1.2} />);
+          }
+        } else if (fx.kind === "sliding_single") {
+          children.push(<line key="rail" x1={-W / 2} y1={0} x2={W / 2} y2={0} stroke="#999" strokeWidth={0.6} />);
+          children.push(<line key="panel" x1={-W / 2} y1={-wallT / 4} x2={0} y2={-wallT / 4} stroke="#222" strokeWidth={2} />);
+          children.push(<line key="panel2" x1={0} y1={wallT / 4} x2={W / 2} y2={wallT / 4} stroke="#222" strokeWidth={2} />);
+          children.push(<line key="ar" x1={-W * 0.1} y1={-wallT} x2={W * 0.3} y2={-wallT} stroke="#c0392b" strokeWidth={0.8} markerEnd="url(#fxArrow)" />);
+        } else if (fx.kind === "sliding_double") {
+          children.push(<line key="rail" x1={-W / 2} y1={0} x2={W / 2} y2={0} stroke="#999" strokeWidth={0.6} />);
+          children.push(<line key="p1" x1={-W / 2} y1={-wallT / 4} x2={W * 0.05} y2={-wallT / 4} stroke="#222" strokeWidth={2} />);
+          children.push(<line key="p2" x1={-W * 0.05} y1={wallT / 4} x2={W / 2} y2={wallT / 4} stroke="#222" strokeWidth={2} />);
+        } else if (fx.kind === "folding") {
+          const n = 4;
+          const pts = Array.from({ length: n + 1 }, (_, i) => `${-W / 2 + (W * i) / n},${i % 2 === 0 ? 0 : ny * W * 0.12}`).join(" ");
+          children.push(<polyline key="fold" points={pts} fill="none" stroke="#222" strokeWidth={1.5} />);
+        } else if (fx.kind === "window" || fx.kind === "window_terrace" || fx.kind === "window_small") {
+          children.push(<line key="g1" x1={-W / 2} y1={-wallT / 5} x2={W / 2} y2={-wallT / 5} stroke="#3a6ea5" strokeWidth={1.2} />);
+          children.push(<line key="g2" x1={-W / 2} y1={wallT / 5} x2={W / 2} y2={wallT / 5} stroke="#3a6ea5" strokeWidth={1.2} />);
+          children.push(<line key="e1" x1={-W / 2} y1={-wallT / 2} x2={-W / 2} y2={wallT / 2} stroke="#222" strokeWidth={1.5} />);
+          children.push(<line key="e2" x1={W / 2} y1={-wallT / 2} x2={W / 2} y2={wallT / 2} stroke="#222" strokeWidth={1.5} />);
+          if (fx.kind === "window_terrace") children.push(<line key="mid" x1={0} y1={-wallT / 2} x2={0} y2={wallT / 2} stroke="#222" strokeWidth={1} />);
+        } else {
+          children.push(<line key="o1" x1={-W / 2} y1={-wallT / 2} x2={-W / 2} y2={wallT / 2} stroke="#222" strokeWidth={1.5} />);
+          children.push(<line key="o2" x1={W / 2} y1={-wallT / 2} x2={W / 2} y2={wallT / 2} stroke="#222" strokeWidth={1.5} />);
+        }
+        return (
+          <g key={fx.id} transform={`translate(${mid.x} ${mid.y}) rotate(${rot})`} onPointerDown={(e) => { e.stopPropagation(); onSelect?.(fx.id); onStartDrag?.(fx, e); }} className={onStartDrag ? "cursor-move" : ""}>
+            <defs>
+              <marker id="fxArrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#c0392b" /></marker>
+            </defs>
+            <rect x={-W / 2 - 4} y={-wallT * 2} width={W + 8} height={wallT * 4} fill="transparent" />
+            {children}
+            {isSel && <rect x={-W / 2 - 4} y={-wallT * 2} width={W + 8} height={wallT * 4} fill="none" stroke="#2f6fed" strokeWidth={1.5} strokeDasharray="4 2" />}
+            {!compact && <text x={0} y={ny < 0 ? wallT * 2.6 : -wallT * 1.8} textAnchor="middle" fontSize={8} fill="#555" transform={Math.abs(rot) > 90 ? `rotate(180 0 ${ny < 0 ? wallT * 2.6 - 3 : -wallT * 1.8 - 3})` : undefined}>{FIXTURE_LABEL[fx.kind]} {Math.round(fx.width * 1000)}</text>}
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -555,6 +779,7 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
               </text>
               <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
               <FloorSvg floor={f} project={project} ox={cx + 60} oy={cy + 80} px={px} compact flip={!!project.grid?.flip} />
+              <FixturesSvg fixtures={f.fixtures ?? []} project={project} ox={cx + 60} oy={cy + 80} px={px} flip={!!project.grid?.flip} compact />
               {f.level === 1 && <BoundaryDims cl={clearances(project.site, project.grid, b.w, b.d)} ox={cx + 60} oy={cy + 80} px={px} w={b.w} d={b.d} flip={!!project.grid?.flip} roadSide="bottom" compact />}
             </g>
           );
