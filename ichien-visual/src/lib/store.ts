@@ -26,14 +26,26 @@ function writeIndex(ix: Index) {
     /* ignore */
   }
 }
+/** 以前の保存で 0.46 / 0.905 のように丸まってしまった値を 455mm 刻みに戻す */
+function fixGrid(v: number) {
+  const s = Math.round(v / 0.455) * 0.455;
+  return Math.abs(v - s) < 0.011 ? Math.round(s * 1000) / 1000 : v;
+}
+export function normalizeProject(p: Project): Project {
+  if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
+  if (!p.openings) p.openings = [];
+  p.floors = (p.floors ?? []).map((f) => ({
+    ...f,
+    rooms: (f.rooms ?? []).map((r) => ({ ...r, x: fixGrid(r.x), y: fixGrid(r.y), w: fixGrid(r.w), d: fixGrid(r.d) })),
+    fixtures: (f.fixtures ?? []).map((x) => ({ ...x, x: fixGrid(x.x), y: fixGrid(x.y) })),
+  }));
+  return p;
+}
 function readProject(id: string): Project | null {
   try {
     const raw = localStorage.getItem(itemKey(id));
     if (!raw) return null;
-    const p = JSON.parse(raw) as Project;
-    if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
-    if (!p.openings) p.openings = [];
-    return p;
+    return normalizeProject(JSON.parse(raw) as Project);
   } catch {
     return null;
   }

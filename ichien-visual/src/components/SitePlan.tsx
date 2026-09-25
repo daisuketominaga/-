@@ -51,14 +51,7 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
     const svg = svgRef.current!;
     const ctm = svg.getScreenCTM()!;
     const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
-    // 北回転を打ち消す
-    const c = { x: W / 2, y: H / 2 };
-    const r = (site.northDeg * Math.PI) / 180;
-    const dx = pt.x - c.x;
-    const dy = pt.y - c.y;
-    const x = c.x + dx * Math.cos(r) - dy * Math.sin(r);
-    const y = c.y + dx * Math.sin(r) + dy * Math.cos(r);
-    return fromPx(x, y);
+    return fromPx(pt.x, pt.y);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -165,8 +158,12 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
               <input type="number" className="field" value={site.farRatio} onChange={(e) => setSite((s) => ({ ...s, farRatio: Number(e.target.value) }))} />
             </div>
             <div>
-              <span className="label">北の向き（度）</span>
-              <input type="number" step="1" className="field" value={site.northDeg} onChange={(e) => setSite((s) => ({ ...s, northDeg: Number(e.target.value) }))} />
+              <span className="label">北の向き（度）ふつうは 0</span>
+              <div className="flex gap-1">
+                <input type="number" step="1" className="field" value={site.northDeg} onChange={(e) => setSite((s) => ({ ...s, northDeg: Number(e.target.value) }))} />
+                {site.northDeg !== 0 && <button className="btn-ghost whitespace-nowrap px-2 text-xs" onClick={() => setSite((s) => ({ ...s, northDeg: 0 }))}>0に戻す</button>}
+              </div>
+              <span className="text-[10px] text-slate-400">図は座標のまま（上が北）。数字を入れると方位記号だけ回ります</span>
             </div>
             <div>
               <span className="label">境界からの離れ m</span>
@@ -262,8 +259,8 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
             onPointerLeave={() => setDrag(null)}
           >
             <rect x={0} y={0} width={W} height={H} fill="#ffffff" />
-            <g transform={`rotate(${-site.northDeg} ${W / 2} ${H / 2})`}>
-              {/* 道路帯 */}
+            <g>
+              {/* 道路帯（座標はそのまま描く。回転しない） */}
               {site.edges
                 .filter((e) => e.road)
                 .map((e) => {
@@ -409,14 +406,14 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
               ))}
             </g>
 
-            {/* 方位（回転しない位置に置き、矢印だけ回す） */}
+            {/* 方位（図は回さず、矢印だけ北の向きへ回す） */}
             <g transform={`translate(${W - 50} 50)`}>
               <circle r={22} fill="#fff" stroke="#333" strokeWidth={1} />
-              <g>
+              <g transform={`rotate(${site.northDeg})`}>
                 <polygon points="0,-18 7,6 0,2 -7,6" fill="#111" />
                 <polygon points="0,-18 7,6 0,2" fill="#fff" stroke="#111" strokeWidth={0.5} />
               </g>
-              <text y={-28} textAnchor="middle" fontSize={14} fontWeight={700}>N</text>
+              {(() => { const r = (site.northDeg * Math.PI) / 180; return <text x={Math.sin(r) * 30} y={-Math.cos(r) * 30 + 5} textAnchor="middle" fontSize={14} fontWeight={700}>N</text>; })()}
             </g>
           </svg>
         </div>
