@@ -5,7 +5,6 @@ import type { Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fix
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
-import { clearances } from "@/lib/grid";
 
 type Props = {
   project: Project;
@@ -14,6 +13,57 @@ type Props = {
 
 const PX = 60; // px per m
 const snap = (v: number) => Math.round(v / HALF) * HALF;
+
+type Wall = { x1: number; y1: number; x2: number; y2: number; along: "h" | "v"; outer: boolean };
+const EXTERIOR_ONLY: FixtureKind[] = ["window", "window_terrace", "window_small", "door_entrance", "door_parent_child"];
+
+/** 外壁と部屋の境界線を壁の候補として集める */
+function wallSegments(bw: number, bd: number, rooms: Room[]): Wall[] {
+  const walls: Wall[] = [
+    { x1: 0, y1: 0, x2: bw, y2: 0, along: "h", outer: true },
+    { x1: 0, y1: bd, x2: bw, y2: bd, along: "h", outer: true },
+    { x1: 0, y1: 0, x2: 0, y2: bd, along: "v", outer: true },
+    { x1: bw, y1: 0, x2: bw, y2: bd, along: "v", outer: true },
+  ];
+  const eps = 1e-6;
+  for (const r of rooms) {
+    if (r.type === "balcony") continue;
+    const edges: Wall[] = [
+      { x1: r.x, y1: r.y, x2: r.x + r.w, y2: r.y, along: "h", outer: false },
+      { x1: r.x, y1: r.y + r.d, x2: r.x + r.w, y2: r.y + r.d, along: "h", outer: false },
+      { x1: r.x, y1: r.y, x2: r.x, y2: r.y + r.d, along: "v", outer: false },
+      { x1: r.x + r.w, y1: r.y, x2: r.x + r.w, y2: r.y + r.d, along: "v", outer: false },
+    ];
+    for (const e of edges) {
+      const onOuter = (e.along === "h" && (Math.abs(e.y1) < eps || Math.abs(e.y1 - bd) < eps)) || (e.along === "v" && (Math.abs(e.x1) < eps || Math.abs(e.x1 - bw) < eps));
+      if (!onOuter) walls.push(e);
+    }
+  }
+  return walls;
+}
+
+/** 点に最も近い壁へ吸着させ、建具が壁の中に収まる位置を返す */
+function snapToWall(kind: FixtureKind, width: number, x: number, y: number, walls: Wall[]): { x: number; y: number; along: "h" | "v" } | null {
+  const cands = EXTERIOR_ONLY.includes(kind) ? walls.filter((w) => w.outer) : walls;
+  let best: { d: number; w: Wall; t: number } | null = null;
+  for (const w of cands) {
+    const len = w.along === "h" ? w.x2 - w.x1 : w.y2 - w.y1;
+    if (len < width - 1e-6) continue; // 壁より広い建具は置けない
+    const t = w.along === "h" ? x - w.x1 : y - w.y1; // 壁に沿った位置（建具の中心）
+    const tc = Math.max(width / 2, Math.min(len - width / 2, t));
+    const px = w.along === "h" ? w.x1 + tc : w.x1;
+    const py = w.along === "h" ? w.y1 : w.y1 + tc;
+    const d = Math.hypot(px - x, py - y);
+    if (!best || d < best.d) best = { d, w, t: tc };
+  }
+  if (!best) return null;
+  const { w, t } = best;
+  const len = w.along === "h" ? w.x2 - w.x1 : w.y2 - w.y1;
+  // 始点を455mm刻みに寄せ、壁の中に収める
+  let start = Math.round((t - width / 2) / HALF) * HALF;
+  start = Math.max(0, Math.min(len - width, start));
+  return w.along === "h" ? { x: w.x1 + start, y: w.y1, along: "h" } : { x: w.x1, y: w.y1 + start, along: "v" };
+}
 
 const FIXTURE_KINDS: FixtureKind[] = ["door_single", "sliding_single", "sliding_double", "folding", "door_entrance", "door_parent_child", "window", "window_terrace", "window_small", "opening"];
 const ROOM_TYPES: RoomType[] = ["ldk", "living", "kitchen", "bedroom", "japanese", "study", "entrance", "hall", "toilet", "bath", "washroom", "closet", "storage", "stairs", "garage", "balcony", "other"];
@@ -53,17 +103,22 @@ export default function FloorPlan({ project, setProject }: Props) {
   const updateRoom = (id: string, patch: Partial<Room>) => setFloor((f) => ({ ...f, rooms: f.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
   const fixtures: Fixture[] = floor.fixtures ?? [];
   const updateFx = (id: string, patch: Partial<Fixture>) => setFloor((f) => ({ ...f, fixtures: (f.fixtures ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  const walls = wallSegments(building.w, building.d, floor.rooms);
   const addFx = (kind: FixtureKind, at: { x: number; y: number }) => {
     const width = FIXTURE_DEFAULT_WIDTH[kind];
-    const fx: Fixture = { id: uid(), kind, x: Math.max(0, Math.min(building.w, snap(at.x))), y: Math.max(0, Math.min(building.d, snap(at.y))), along: "h", width, hinge: "start", swing: "plus" };
+    const pos = snapToWall(kind, width, at.x, at.y, walls);
+    if (!pos) {
+      setMsg("エラー: この建具が収まる壁がありません（窓・玄関ドアは外壁のみ）");
+      return;
+    }
+    const fx: Fixture = { id: uid(), kind, ...pos, width, hinge: "start", swing: "plus" };
     setFloor((f) => ({ ...f, fixtures: [...(f.fixtures ?? []), fx] }));
     setSelFx(fx.id);
     setSel(null);
   };
 
   const flip = !!project.grid?.flip;
-  const cl = clearances(project.site, project.grid, building.w, building.d);
-  const M = 90; // 境界までの寸法を書く余白
+  const M = 90; // 寸法線を書く余白
   const W = building.w * PX + M * 2;
   const H = building.d * PX + M * 2;
   const ox = M;
@@ -87,12 +142,18 @@ export default function FloorPlan({ project, setProject }: Props) {
   const onMove = (e: React.PointerEvent) => {
     if (placingFx) {
       const p = localOf(e);
-      setGhost({ x: snap(p.x), y: snap(p.y) });
+      const pos = snapToWall(placingFx, FIXTURE_DEFAULT_WIDTH[placingFx], p.x, p.y, walls);
+      setGhost(pos ? { x: pos.x + (pos.along === "h" ? FIXTURE_DEFAULT_WIDTH[placingFx] / 2 : 0), y: pos.y + (pos.along === "v" ? FIXTURE_DEFAULT_WIDTH[placingFx] / 2 : 0) } : { x: p.x, y: p.y });
       return;
     }
     if (dragFx) {
       const p = localOf(e);
-      updateFx(dragFx.id, { x: Math.max(0, Math.min(building.w, snap(dragFx.ox + p.x - dragFx.sx))), y: Math.max(0, Math.min(building.d, snap(dragFx.oy + p.y - dragFx.sy))) });
+      const fx = fixtures.find((f) => f.id === dragFx.id);
+      if (!fx) return;
+      const cx = dragFx.ox + p.x - dragFx.sx + (fx.along === "h" ? fx.width / 2 : 0);
+      const cy = dragFx.oy + p.y - dragFx.sy + (fx.along === "v" ? fx.width / 2 : 0);
+      const pos = snapToWall(fx.kind, fx.width, cx, cy, walls);
+      if (pos) updateFx(dragFx.id, pos);
       return;
     }
     if (placing) {
@@ -231,7 +292,7 @@ export default function FloorPlan({ project, setProject }: Props) {
               </button>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-slate-500">建具も同じくドラッグで壁の上へ。置いた後に向き・吊元・開く側を変えられます。</p>
+          <p className="mt-2 text-[11px] text-slate-500">建具はドラッグすると一番近い壁に吸い付きます。窓と玄関ドアは外壁だけ。置いた後に吊元・開く側・幅を変えられます。</p>
           <div className="flex flex-wrap gap-1">
             {FIXTURE_KINDS.map((k) => (
               <button
@@ -253,7 +314,6 @@ export default function FloorPlan({ project, setProject }: Props) {
                     <select className="field w-auto px-1 py-0" value={fx.kind} onChange={(e) => updateFx(fx.id, { kind: e.target.value as FixtureKind, width: FIXTURE_DEFAULT_WIDTH[e.target.value as FixtureKind] })}>
                       {FIXTURE_KINDS.map((k) => <option key={k} value={k}>{FIXTURE_LABEL[k]}</option>)}
                     </select>
-                    <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); updateFx(fx.id, { along: fx.along === "h" ? "v" : "h" }); }}>{fx.along === "h" ? "横壁" : "縦壁"}</button>
                     {(fx.kind === "door_single" || fx.kind === "door_entrance" || fx.kind === "door_parent_child") && (
                       <>
                         <button className="rounded border border-slate-200 px-1 hover:bg-slate-50" onClick={(e) => { e.stopPropagation(); updateFx(fx.id, { hinge: fx.hinge === "end" ? "start" : "end" }); }}>吊元{fx.along === "h" ? (fx.hinge === "end" ? "右" : "左") : (fx.hinge === "end" ? "上" : "下")}</button>
@@ -381,7 +441,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             <rect width={W} height={H} fill="#fff" />
             <FloorSvg floor={floor} project={project} ox={ox} oy={oy} px={PX} sel={sel} onSelect={setSel} flip={flip} level={level} onStartDrag={(r, mode, e) => { if (mode === "resize" && flip) return; const p = localOf(e); setDrag({ id: r.id, mode, ox: r.x, oy: r.y, ow: r.w, od: r.d, sx: p.x, sy: p.y }); }} />
             <FixturesSvg fixtures={fixtures} project={project} ox={ox} oy={oy} px={PX} flip={flip} sel={selFx} onSelect={(id) => { setSelFx(id); setSel(null); }} onStartDrag={(fx, e) => { const p = localOf(e); setDragFx({ id: fx.id, ox: fx.x, oy: fx.y, sx: p.x, sy: p.y }); }} />
-            {level === 1 && <BoundaryDims cl={cl} ox={ox} oy={oy} px={PX} w={building.w} d={building.d} flip={flip} roadSide="bottom" />}
+            <BuildingDims rooms={floor.rooms} ox={ox} oy={oy} px={PX} w={building.w} d={building.d} flip={flip} />
             {placingFx && ghost && (() => {
               const gx = flip ? ox + (building.w - ghost.x) * PX : ox + ghost.x * PX;
               const gy = flip ? oy + ghost.y * PX : oy + (building.d - ghost.y) * PX;
@@ -397,7 +457,7 @@ export default function FloorPlan({ project, setProject }: Props) {
                 </g>
               );
             })()}
-            <text x={ox} y={oy - 62} fontSize={16} fontWeight={700} fill="#222">
+            <text x={ox} y={oy - 68} fontSize={16} fontWeight={700} fill="#222">
               {level}階　床面積 {round(floorArea(floor), 2)}㎡{balconyArea(floor) ? `（バルコニー ${round(balconyArea(floor), 2)}㎡ 別）` : ""}
             </text>
             <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
@@ -519,46 +579,52 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
   );
 }
 
-/** 1階: 建物の各辺から境界線までの距離（mm） */
-export function BoundaryDims({ cl, ox, oy, px, w, d, flip, compact }: { cl: { bottom: number | null; top: number | null; left: number | null; right: number | null }; ox: number; oy: number; px: number; w: number; d: number; flip: boolean; roadSide: "bottom"; compact?: boolean }) {
-  // 表示上の各辺に対応する距離（反転時は上下左右が入れ替わる）
-  const top = flip ? cl.bottom : cl.top;
-  const bottom = flip ? cl.top : cl.bottom;
-  const left = flip ? cl.right : cl.left;
-  const right = flip ? cl.left : cl.right;
-  const roadOnTop = flip;
-  const fs = compact ? 9 : 11;
-  const L = compact ? 22 : 34;
-  const mm = (m: number | null) => (m === null ? "－" : `${Math.round(m * 1000).toLocaleString()}`);
-  const cx = ox + (w * px) / 2;
-  const cy = oy + (d * px) / 2;
-  const Arrow = ({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) => (
-    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c0392b" strokeWidth={1} markerStart="url(#bdS)" markerEnd="url(#bdE)" />
-  );
-  return (
-    <g fontSize={fs} fill="#c0392b" fontWeight={700}>
-      <defs>
-        <marker id="bdE" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#c0392b" /></marker>
-        <marker id="bdS" markerWidth="6" markerHeight="6" refX="1" refY="3" orient="auto"><path d="M6,0 L0,3 L6,6 z" fill="#c0392b" /></marker>
-      </defs>
-      {/* 上 */}
-      <Arrow x1={cx} y1={oy - 2} x2={cx} y2={oy - L} />
-      <line x1={ox - 10} y1={oy - L} x2={ox + w * px + 10} y2={oy - L} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
-      <text x={cx + 6} y={oy - L / 2 + 4}>{roadOnTop ? "道路境界線まで" : "隣地境界線まで"} {mm(top)}</text>
-      {/* 下 */}
-      <Arrow x1={cx} y1={oy + d * px + 2} x2={cx} y2={oy + d * px + L} />
-      <line x1={ox - 10} y1={oy + d * px + L} x2={ox + w * px + 10} y2={oy + d * px + L} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
-      <text x={cx + 6} y={oy + d * px + L / 2 + 4}>{roadOnTop ? "隣地境界線まで" : "道路境界線まで"} {mm(bottom)}</text>
-      {/* 左 */}
-      <Arrow x1={ox - 2} y1={cy} x2={ox - L} y2={cy} />
-      <line x1={ox - L} y1={oy - 10} x2={ox - L} y2={oy + d * px + 10} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
-      <text x={ox - L / 2} y={cy - 8} textAnchor="middle" transform={`rotate(-90 ${ox - L / 2} ${cy - 8})`}>隣地境界線まで {mm(left)}</text>
-      {/* 右 */}
-      <Arrow x1={ox + w * px + 2} y1={cy} x2={ox + w * px + L} y2={cy} />
-      <line x1={ox + w * px + L} y1={oy - 10} x2={ox + w * px + L} y2={oy + d * px + 10} stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 3" />
-      <text x={ox + w * px + L / 2} y={cy - 8} textAnchor="middle" transform={`rotate(90 ${ox + w * px + L / 2} ${cy - 8})`}>隣地境界線まで {mm(right)}</text>
-    </g>
-  );
+/** 建物の寸法線: 上に幅の区切り寸法と全体、左に奥行の区切り寸法と全体（mm） */
+export function BuildingDims({ rooms, ox, oy, px, w, d, flip, compact }: { rooms: Room[]; ox: number; oy: number; px: number; w: number; d: number; flip: boolean; compact?: boolean }) {
+  const fs = compact ? 8 : 10;
+  const L1 = compact ? 18 : 26; // 区切り寸法の線
+  const L2 = compact ? 36 : 52; // 全体寸法の線
+  const mm = (m: number) => `${Math.round(m * 1000).toLocaleString()}`;
+  const uniq = (vals: number[], max: number) => {
+    const set = new Set<number>([0, +max.toFixed(3)]);
+    for (const v of vals) if (v > 1e-6 && v < max - 1e-6) set.add(+v.toFixed(3));
+    return Array.from(set).sort((a, b) => a - b);
+  };
+  const xs = uniq(rooms.flatMap((r) => [r.x, r.x + r.w]), w);
+  const ys = uniq(rooms.flatMap((r) => [r.y, r.y + r.d]), d);
+  const X = (x: number) => (flip ? ox + (w - x) * px : ox + x * px);
+  const Y = (y: number) => (flip ? oy + y * px : oy + (d - y) * px);
+  const tick = (x1: number, y1: number, x2: number, y2: number) => <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#333" strokeWidth={0.7} />;
+  const els: React.ReactNode[] = [];
+  // 上: 幅
+  const yA = oy - L1, yB = oy - L2;
+  els.push(<line key="ta" x1={X(0)} y1={yA} x2={X(w)} y2={yA} stroke="#333" strokeWidth={0.7} />);
+  els.push(<line key="tb" x1={X(0)} y1={yB} x2={X(w)} y2={yB} stroke="#333" strokeWidth={0.9} />);
+  xs.forEach((x, i) => {
+    els.push(<g key={"tx" + i}>{tick(X(x), yA - 4, X(x), oy - 2)}</g>);
+    if (i > 0) {
+      const seg = x - xs[i - 1];
+      if (seg > 0.2) els.push(<text key={"ts" + i} x={(X(x) + X(xs[i - 1])) / 2} y={yA - 3} textAnchor="middle" fontSize={fs} fill="#333">{mm(seg)}</text>);
+    }
+  });
+  els.push(<g key="tx0">{tick(X(0), yB - 5, X(0), yB + 5)}{tick(X(w), yB - 5, X(w), yB + 5)}</g>);
+  els.push(<text key="tw" x={(X(0) + X(w)) / 2} y={yB - 4} textAnchor="middle" fontSize={fs + 2} fontWeight={700} fill="#222">{mm(w)}</text>);
+  // 左: 奥行
+  const xA = ox - L1, xB = ox - L2;
+  els.push(<line key="la" x1={xA} y1={Y(0)} x2={xA} y2={Y(d)} stroke="#333" strokeWidth={0.7} />);
+  els.push(<line key="lb" x1={xB} y1={Y(0)} x2={xB} y2={Y(d)} stroke="#333" strokeWidth={0.9} />);
+  ys.forEach((y, i) => {
+    els.push(<g key={"ly" + i}>{tick(xA - 4, Y(y), ox - 2, Y(y))}</g>);
+    if (i > 0) {
+      const seg = y - ys[i - 1];
+      const my = (Y(y) + Y(ys[i - 1])) / 2;
+      if (seg > 0.2) els.push(<text key={"ls" + i} x={xA - 3} y={my} textAnchor="middle" fontSize={fs} fill="#333" transform={`rotate(-90 ${xA - 3} ${my})`}>{mm(seg)}</text>);
+    }
+  });
+  els.push(<g key="ly0">{tick(xB - 5, Y(0), xB + 5, Y(0))}{tick(xB - 5, Y(d), xB + 5, Y(d))}</g>);
+  const myAll = (Y(0) + Y(d)) / 2;
+  els.push(<text key="ld" x={xB - 4} y={myAll} textAnchor="middle" fontSize={fs + 2} fontWeight={700} fill="#222" transform={`rotate(-90 ${xB - 4} ${myAll})`}>{mm(d)}</text>);
+  return <g>{els}</g>;
 }
 
 /** 階段: 直階段 / 回り階段（1坪・折り返し） / かね折れ。段の線と UP/DN の矢印 */
@@ -780,7 +846,7 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
               <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg + (project.grid?.flip ? 180 : 0)} />
               <FloorSvg floor={f} project={project} ox={cx + 60} oy={cy + 80} px={px} compact flip={!!project.grid?.flip} />
               <FixturesSvg fixtures={f.fixtures ?? []} project={project} ox={cx + 60} oy={cy + 80} px={px} flip={!!project.grid?.flip} compact />
-              {f.level === 1 && <BoundaryDims cl={clearances(project.site, project.grid, b.w, b.d)} ox={cx + 60} oy={cy + 80} px={px} w={b.w} d={b.d} flip={!!project.grid?.flip} roadSide="bottom" compact />}
+              <BuildingDims rooms={f.rooms} ox={cx + 60} oy={cy + 80} px={px} w={b.w} d={b.d} flip={!!project.grid?.flip} compact />
             </g>
           );
         })}
