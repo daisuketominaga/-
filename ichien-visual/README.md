@@ -26,6 +26,9 @@ npm run dev
 
 Vercel にデプロイする場合は、Root Directory を `ichien-visual` にし、環境変数 `ANTHROPIC_API_KEY` を設定してください。
 
+現在は既存の Vercel プロジェクト（旧 ryourikensaku）をこのアプリに付け替えて運用しています（プロジェクト数を増やさないため）。
+本番URL: https://ichien-visual.vercel.app （旧URL https://ryourikensaku.vercel.app も同じ内容）
+
 ## 法令の扱い
 
 - 境界からの離れは民法234条1項（50cm）を基本表示にしています。
