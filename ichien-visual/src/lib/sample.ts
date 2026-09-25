@@ -12,65 +12,79 @@ export function sampleProject(): Project {
     { x: 0.0, y: 1.2 }, // K9 隅切り上
     { x: 0.284, y: 8.77 }, // K7（NTT柱）
   ];
+  // 8×7.5マス（7.28×6.825m）に収まる、455mm刻みの参考プラン
   const floors: Floor[] = [
     {
       level: 1,
       rooms: [
-        { id: "r1", name: "ガレージ", type: "garage", x: 0, y: 0, w: 3.4, d: 3.2 },
-        { id: "r2", name: "玄関", type: "entrance", x: 0, y: 3.2, w: 1.4, d: 1.6 },
-        { id: "r3", name: "廊下", type: "hall", x: 1.4, y: 3.2, w: 3.6, d: 1.0 },
-        { id: "r4", name: "トイレ", type: "toilet", x: 3.4, y: 2.2, w: 1.0, d: 1.0 },
-        { id: "r5", name: "洗面・脱衣室", type: "washroom", x: 4.4, y: 1.6, w: 1.8, d: 1.6 },
-        { id: "r6", name: "浴室", type: "bath", x: 4.4, y: 0, w: 1.8, d: 1.6 },
-        { id: "r7", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
-        { id: "r8", name: "WCL", type: "closet", x: 0, y: 6.8, w: 1.4, d: 1.5 },
-        { id: "r9", name: "洋室", type: "bedroom", x: 1.4, y: 4.2, w: 3.8, d: 4.1 },
-        { id: "r10", name: "収納", type: "closet", x: 5.2, y: 4.2, w: 1.0, d: 1.2 },
+        { id: "r1", name: "ガレージ", type: "garage", x: 0, y: 0, w: 3.64, d: 3.185 },
+        { id: "r2", name: "玄関", type: "entrance", x: 3.64, y: 0, w: 1.82, d: 1.365 },
+        { id: "r3", name: "ホール", type: "hall", x: 3.64, y: 1.365, w: 1.82, d: 1.82 },
+        { id: "r4", name: "トイレ", type: "toilet", x: 5.46, y: 0, w: 0.91, d: 1.82 },
+        { id: "r5", name: "収納", type: "closet", x: 6.37, y: 0, w: 0.91, d: 1.82 },
+        { id: "r6", name: "階段", type: "stairs", x: 5.46, y: 1.82, w: 1.82, d: 1.82, dir: "up", stairKind: "u_turn", turn: "left" },
+        { id: "r7", name: "廊下", type: "hall", x: 0, y: 3.185, w: 5.46, d: 0.91 },
+        { id: "r8", name: "洋室", type: "bedroom", x: 0, y: 4.095, w: 3.64, d: 2.73 },
+        { id: "r9", name: "洗面・脱衣室", type: "washroom", x: 3.64, y: 4.095, w: 1.82, d: 1.365 },
+        { id: "r10", name: "浴室", type: "bath", x: 3.64, y: 5.46, w: 1.82, d: 1.365 },
+        { id: "r11", name: "WCL", type: "closet", x: 5.46, y: 3.64, w: 1.82, d: 3.185 },
+      ],
+      fixtures: [
+        { id: "x1", kind: "opening", x: 0.455, y: 0, along: "h", width: 2.73 },
+        { id: "x2", kind: "door_entrance", x: 4.095, y: 0, along: "h", width: 0.924, hinge: "start", swing: "plus" },
+        { id: "x3", kind: "door_single", x: 4.095, y: 1.365, along: "h", width: 0.78, hinge: "end", swing: "plus" },
+        { id: "x4", kind: "door_single", x: 2.275, y: 4.095, along: "h", width: 0.78, hinge: "start", swing: "plus" },
+        { id: "x5", kind: "sliding_single", x: 3.64, y: 4.095, along: "h", width: 1.644 },
+        { id: "x6", kind: "door_single", x: 4.095, y: 5.46, along: "h", width: 0.78, hinge: "start", swing: "plus" },
+        { id: "x7", kind: "door_single", x: 5.46, y: 0.455, along: "v", width: 0.78, hinge: "start", swing: "minus" },
+        { id: "x8", kind: "window", x: 0.91, y: 6.825, along: "h", width: 1.69 },
+        { id: "x9", kind: "window", x: 0, y: 4.55, along: "v", width: 1.69 },
+        { id: "x10", kind: "window_small", x: 4.095, y: 6.825, along: "h", width: 0.64 },
       ],
     },
     {
       level: 2,
       rooms: [
-        { id: "r21", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
-        { id: "r22", name: "パントリー", type: "storage", x: 0, y: 6.8, w: 1.4, d: 1.5 },
-        { id: "r23", name: "LDK", type: "ldk", x: 1.4, y: 0, w: 4.8, d: 8.3 },
-        { id: "r24", name: "バルコニー", type: "balcony", x: 0, y: 0, w: 1.4, d: 2.6 },
-        { id: "r25", name: "スタディ", type: "study", x: 4.8, y: 6.8, w: 1.4, d: 1.5 },
+        { id: "r21", name: "LDK", type: "ldk", x: 0, y: 0, w: 5.46, d: 6.825 },
+        { id: "r22", name: "パントリー", type: "storage", x: 5.46, y: 0, w: 1.82, d: 1.82 },
+        { id: "r23", name: "階段", type: "stairs", x: 5.46, y: 1.82, w: 1.82, d: 1.82, dir: "up", stairKind: "u_turn", turn: "left" },
+        { id: "r24", name: "スタディ", type: "study", x: 5.46, y: 3.64, w: 1.82, d: 1.82 },
+        { id: "r25", name: "バルコニー", type: "balcony", x: 5.46, y: 5.46, w: 1.82, d: 1.365 },
+      ],
+      fixtures: [
+        { id: "y1", kind: "window_terrace", x: 0.91, y: 0, along: "h", width: 1.69 },
+        { id: "y2", kind: "window", x: 3.185, y: 0, along: "h", width: 1.69 },
+        { id: "y3", kind: "window_terrace", x: 0, y: 2.275, along: "v", width: 1.69 },
+        { id: "y4", kind: "window", x: 0.91, y: 6.825, along: "h", width: 1.69 },
+        { id: "y5", kind: "window_terrace", x: 5.46, y: 5.46, along: "h", width: 1.69 },
+        { id: "y6", kind: "sliding_single", x: 5.46, y: 3.64, along: "v", width: 1.644 },
       ],
     },
     {
       level: 3,
       rooms: [
-        { id: "r31", name: "階段", type: "stairs", x: 0, y: 4.8, w: 1.4, d: 1.8, dir: "up" },
-        { id: "r32", name: "WCL", type: "closet", x: 0, y: 6.8, w: 1.4, d: 1.5 },
-        { id: "r33", name: "洋室", type: "bedroom", x: 1.4, y: 4.4, w: 4.8, d: 3.9 },
-        { id: "r34", name: "廊下", type: "hall", x: 1.4, y: 3.4, w: 3.6, d: 1.0 },
-        { id: "r35", name: "トイレ", type: "toilet", x: 5.0, y: 3.4, w: 1.2, d: 1.0 },
-        { id: "r36", name: "洋室", type: "bedroom", x: 0, y: 0, w: 3.1, d: 3.4 },
-        { id: "r37", name: "洋室", type: "bedroom", x: 3.1, y: 0, w: 3.1, d: 3.4 },
+        { id: "r31", name: "洋室", type: "bedroom", x: 0, y: 0, w: 3.64, d: 3.64 },
+        { id: "r32", name: "廊下", type: "hall", x: 3.64, y: 0, w: 1.82, d: 3.64 },
+        { id: "r33", name: "トイレ", type: "toilet", x: 5.46, y: 0, w: 0.91, d: 1.82 },
+        { id: "r34", name: "収納", type: "closet", x: 6.37, y: 0, w: 0.91, d: 1.82 },
+        { id: "r35", name: "階段", type: "stairs", x: 5.46, y: 1.82, w: 1.82, d: 1.82, dir: "up", stairKind: "u_turn", turn: "left" },
+        { id: "r36", name: "洋室", type: "bedroom", x: 0, y: 3.64, w: 3.64, d: 3.185 },
+        { id: "r37", name: "洋室", type: "bedroom", x: 3.64, y: 3.64, w: 3.64, d: 3.185 },
+      ],
+      fixtures: [
+        { id: "z1", kind: "window", x: 0.91, y: 0, along: "h", width: 1.69 },
+        { id: "z2", kind: "window", x: 0.91, y: 6.825, along: "h", width: 1.69 },
+        { id: "z3", kind: "window", x: 4.55, y: 6.825, along: "h", width: 1.69 },
+        { id: "z4", kind: "door_single", x: 3.64, y: 1.365, along: "v", width: 0.78, hinge: "start", swing: "minus" },
+        { id: "z5", kind: "door_single", x: 2.275, y: 3.64, along: "h", width: 0.78, hinge: "start", swing: "plus" },
+        { id: "z6", kind: "door_single", x: 4.095, y: 3.64, along: "h", width: 0.78, hinge: "end", swing: "plus" },
+        { id: "z7", kind: "door_single", x: 5.46, y: 0.455, along: "v", width: 0.78, hinge: "start", swing: "minus" },
       ],
     },
   ];
   const openings: Opening[] = [
-    { id: "o1", face: "S", floor: 1, offset: 0.4, width: 2.6, height: 2.2, sill: 0, kind: "garage" },
-    { id: "o2", face: "S", floor: 1, offset: 3.6, width: 0.9, height: 2.2, sill: 0, kind: "door" },
-    { id: "o3", face: "S", floor: 2, offset: 2.0, width: 0.4, height: 2.4, sill: 0.3, kind: "slit" },
-    { id: "o4", face: "E", floor: 2, offset: 0.3, width: 2.4, height: 2.0, sill: 0.2, kind: "window" },
-    { id: "o5", face: "E", floor: 2, offset: 3.4, width: 1.8, height: 1.6, sill: 0.8, kind: "window" },
-    { id: "o6", face: "E", floor: 3, offset: 0.5, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o7", face: "E", floor: 3, offset: 3.6, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o8", face: "N", floor: 1, offset: 1.0, width: 0.6, height: 0.6, sill: 1.5, kind: "window" },
-    { id: "o9", face: "N", floor: 2, offset: 3.0, width: 1.6, height: 2.0, sill: 0.2, kind: "window" },
-    { id: "o10", face: "N", floor: 3, offset: 6.0, width: 1.4, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o11", face: "W", floor: 1, offset: 4.2, width: 1.2, height: 1.0, sill: 1.0, kind: "window" },
-    { id: "o12", face: "W", floor: 3, offset: 1.2, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
+    { id: "o1", face: "S", floor: 2, offset: 5.9, width: 0.4, height: 2.4, sill: 0.3, kind: "slit" },
   ];
-  const sx = 7.28 / 6.2;
-  const sy = 6.825 / 8.3;
-  const r2 = (v: number) => Math.round(Math.round(v / 0.455) * 0.455 * 1000) / 1000;
-  for (const f of floors) {
-    f.rooms = f.rooms.map((r) => ({ ...r, x: r2(r.x * sx), y: r2(r.y * sy), w: r2(r.w * sx), d: r2(r.d * sy) }));
-  }
   const project: Project = {
     name: "藤沢市鵠沼松が岡4丁目",
     address: "神奈川県藤沢市鵠沼松が岡4丁目",

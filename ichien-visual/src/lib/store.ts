@@ -2,46 +2,158 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "./types";
-import { sampleProject } from "./sample";
+import { sampleProject, emptyProject } from "./sample";
 
-const KEY = "ichien-visual-project-v1";
+const LEGACY_KEY = "ichien-visual-project-v1";
+const INDEX_KEY = "ichien-visual-projects-v1";
+const itemKey = (id: string) => `ichien-visual-project:${id}`;
+
+export type ProjectMeta = { id: string; name: string; updatedAt: string };
+type Index = { currentId: string; list: ProjectMeta[] };
+
+function readIndex(): Index | null {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY);
+    return raw ? (JSON.parse(raw) as Index) : null;
+  } catch {
+    return null;
+  }
+}
+function writeIndex(ix: Index) {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(ix));
+  } catch {
+    /* ignore */
+  }
+}
+function readProject(id: string): Project | null {
+  try {
+    const raw = localStorage.getItem(itemKey(id));
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Project;
+    if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
+    if (!p.openings) p.openings = [];
+    return p;
+  } catch {
+    return null;
+  }
+}
+function writeProject(id: string, p: Project) {
+  try {
+    localStorage.setItem(itemKey(id), JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function uid() {
+  return Math.random().toString(36).slice(2, 9);
+}
 
 export function useProject() {
   const [project, setProjectState] = useState<Project | null>(null);
+  const [currentId, setCurrentId] = useState<string>("");
+  const [list, setList] = useState<ProjectMeta[]>([]);
 
+  // 初回: 一覧を読み込む。無ければ旧形式から移行、それも無ければサンプルを作る
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const p = JSON.parse(raw) as Project;
-        if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
-        setProjectState(p);
-        return;
-      }
-    } catch {
-      /* ignore */
-    }
-    setProjectState(sampleProject());
-  }, []);
-
-  const setProject = useCallback((updater: (p: Project) => Project) => {
-    setProjectState((prev) => {
-      const base = prev ?? sampleProject();
-      const next = { ...updater(base), updatedAt: new Date().toISOString() };
+    let ix = readIndex();
+    if (!ix || ix.list.length === 0) {
+      const id = uid();
+      let p: Project | null = null;
       try {
-        localStorage.setItem(KEY, JSON.stringify(next));
+        const raw = localStorage.getItem(LEGACY_KEY);
+        if (raw) p = JSON.parse(raw) as Project;
       } catch {
         /* ignore */
       }
-      return next;
-    });
+      if (!p) p = sampleProject();
+      if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
+      if (!p.openings) p.openings = [];
+      writeProject(id, p);
+      ix = { currentId: id, list: [{ id, name: p.name, updatedAt: p.updatedAt }] };
+      writeIndex(ix);
+    }
+    const cur = readProject(ix.currentId) ?? readProject(ix.list[0].id) ?? sampleProject();
+    const curId = readProject(ix.currentId) ? ix.currentId : ix.list[0].id;
+    setCurrentId(curId);
+    setList(ix.list);
+    setProjectState(cur);
   }, []);
 
-  const replaceProject = useCallback((p: Project) => {
-    setProject(() => p);
-  }, [setProject]);
+  const persist = useCallback((id: string, next: Project) => {
+    writeProject(id, next);
+    const ix = readIndex() ?? { currentId: id, list: [] };
+    const meta = { id, name: next.name, updatedAt: next.updatedAt };
+    const exists = ix.list.some((m) => m.id === id);
+    const newList = exists ? ix.list.map((m) => (m.id === id ? meta : m)) : [...ix.list, meta];
+    writeIndex({ currentId: id, list: newList });
+    setList(newList);
+  }, []);
 
-  return { project, setProject, replaceProject };
+  const setProject = useCallback(
+    (updater: (p: Project) => Project) => {
+      setProjectState((prev) => {
+        const base = prev ?? sampleProject();
+        const next = { ...updater(base), updatedAt: new Date().toISOString() };
+        if (currentId) persist(currentId, next);
+        return next;
+      });
+    },
+    [currentId, persist]
+  );
+
+  const replaceProject = useCallback((p: Project) => setProject(() => p), [setProject]);
+
+  /** 別の物件へ切り替える */
+  const switchTo = useCallback((id: string) => {
+    const p = readProject(id);
+    if (!p) return;
+    setCurrentId(id);
+    setProjectState(p);
+    const ix = readIndex();
+    if (ix) writeIndex({ ...ix, currentId: id });
+  }, []);
+
+  /** 新しい物件を作って切り替える */
+  const createProject = useCallback(
+    (kind: "empty" | "sample" | "copy") => {
+      const id = uid();
+      const base = kind === "sample" ? sampleProject() : kind === "copy" && project ? { ...project, name: project.name + "（コピー）" } : emptyProject();
+      const p = { ...base, updatedAt: new Date().toISOString() };
+      persist(id, p);
+      setCurrentId(id);
+      setProjectState(p);
+      const ix = readIndex();
+      if (ix) writeIndex({ ...ix, currentId: id });
+    },
+    [persist, project]
+  );
+
+  /** 物件を削除する。最後の1件は削除できない */
+  const deleteProject = useCallback(
+    (id: string) => {
+      const ix = readIndex();
+      if (!ix || ix.list.length <= 1) return;
+      try {
+        localStorage.removeItem(itemKey(id));
+      } catch {
+        /* ignore */
+      }
+      const newList = ix.list.filter((m) => m.id !== id);
+      const nextId = id === ix.currentId ? newList[0].id : ix.currentId;
+      writeIndex({ currentId: nextId, list: newList });
+      setList(newList);
+      if (id === currentId) {
+        const p = readProject(nextId);
+        setCurrentId(nextId);
+        if (p) setProjectState(p);
+      }
+    },
+    [currentId]
+  );
+
+  return { project, setProject, replaceProject, list, currentId, switchTo, createProject, deleteProject };
 }
 
 export function downloadText(filename: string, text: string, mime = "application/json") {
@@ -80,8 +192,4 @@ export async function downloadSvgAsPng(svg: SVGSVGElement, filename: string, sca
   a.href = canvas.toDataURL("image/png");
   a.download = filename;
   a.click();
-}
-
-export function uid() {
-  return Math.random().toString(36).slice(2, 9);
 }

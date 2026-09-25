@@ -10,11 +10,13 @@ import SurveyImport from "./SurveyImport";
 type Props = {
   project: Project;
   setProject: (u: (p: Project) => Project) => void;
+  /** 印刷用: 図だけを描く */
+  readOnly?: boolean;
 };
 
 const PX_PER_M = 40;
 
-export default function SitePlan({ project, setProject }: Props) {
+export default function SitePlan({ project, setProject, readOnly }: Props) {
   const { site } = project;
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ kind: "pt"; i: number } | null>(null);
@@ -121,7 +123,8 @@ export default function SitePlan({ project, setProject }: Props) {
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+    <div className={readOnly ? "block" : "grid gap-4 lg:grid-cols-[340px_1fr]"}>
+      {!readOnly && (
       <aside className="space-y-4">
         <SurveyImport
           onResult={(s) =>
@@ -224,9 +227,10 @@ export default function SitePlan({ project, setProject }: Props) {
           </label>
         </div>
       </aside>
+      )}
 
       <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className={`flex flex-wrap items-center justify-between gap-2 ${readOnly ? "print-hide" : ""}`}>
           <div className="text-sm text-slate-600">
             <b>{project.name}</b> 敷地図　{round(area, 2)} m²（{round(area / TSUBO_M2, 2)}坪）
           </div>

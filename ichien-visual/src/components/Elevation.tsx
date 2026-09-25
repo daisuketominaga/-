@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { Project, Face, Opening, Building } from "@/lib/types";
 import { faceLength, roofRise, round, faceCompass, roadFaceOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
+import { derivedOpenings } from "@/lib/openings";
 
 type Props = {
   project: Project;
@@ -14,6 +15,10 @@ type Props = {
 const FACE_BASE: Record<Face, string> = { S: "底辺側", N: "奥側", W: "左側", E: "右側" };
 /** 面を外から見たとき、左側と右側にある面 */
 const SIDES_FACE: Record<Face, [Face, Face]> = { N: ["E", "W"], S: ["W", "E"], E: ["S", "N"], W: ["N", "S"] };
+export function elevationTitle(project: Project) {
+  const b = project.building;
+  return `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸（${FACE_BASE[b.roofHighSide]}が高い）` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
+}
 function faceTitle(project: Project, face: Face) {
   return `${FACE_BASE[face]}立面図（${faceCompass(project.building, face, project.site.northDeg)}）`;
 }
@@ -50,7 +55,7 @@ export default function Elevation({ project, setProject }: Props) {
 
   const roadFace: Face | null = roadFaceOf(site, b);
 
-  const title = `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸（${FACE_BASE[b.roofHighSide]}が高い）` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
+  const title = elevationTitle(project);
 
   return (
     <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
@@ -104,7 +109,7 @@ export default function Elevation({ project, setProject }: Props) {
 
         <div className="card space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">窓・ドア</h3>
+            <h3 className="text-sm font-semibold">窓・ドア（追加分）</h3>
             <div className="flex gap-1">
               {(["S", "N", "W", "E"] as Face[]).map((f) => (
                 <button key={f} className={`rounded px-2 py-0.5 text-xs ${editFace === f ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setEditFace(f)}>
@@ -119,6 +124,14 @@ export default function Elevation({ project, setProject }: Props) {
             <button className="btn-ghost" onClick={() => addOpening("door")}>＋玄関ドア</button>
             <button className="btn-ghost" onClick={() => addOpening("garage")}>＋ガレージ開口</button>
           </div>
+          {derivedOpenings(project).filter((o) => o.face === editFace).length > 0 && (
+            <div className="rounded bg-slate-50 p-1.5 text-[11px] text-slate-600">
+              <div className="mb-0.5 font-medium">間取り図の建具から（編集は間取り図で）</div>
+              {derivedOpenings(project).filter((o) => o.face === editFace).map((o) => (
+                <div key={o.id}>{o.floor}F {o.kind === "door" ? "ドア" : o.kind === "garage" ? "開口" : "窓"} 幅{Math.round(o.width * 1000)} 高さ{Math.round(o.height * 1000)} 左から{o.offset.toFixed(2)}m</div>
+              ))}
+            </div>
+          )}
           <div className="max-h-56 space-y-1 overflow-y-auto">
             {openings.filter((o) => o.face === editFace).map((o) => (
               <div key={o.id} className={`rounded border p-1.5 text-[11px] ${sel === o.id ? "border-brand-600 bg-brand-50" : "border-slate-200"}`} onClick={() => setSel(o.id)}>
@@ -142,7 +155,7 @@ export default function Elevation({ project, setProject }: Props) {
                 </div>
               </div>
             ))}
-            {openings.filter((o) => o.face === editFace).length === 0 && <div className="text-xs text-slate-400">この面には窓がありません</div>}
+            {openings.filter((o) => o.face === editFace).length === 0 && <div className="text-xs text-slate-400">追加の窓はありません（間取り図の窓は自動で反映）</div>}
           </div>
           <p className="text-[11px] text-slate-500">「左から」は、その面を外から見て左端からの距離です。</p>
         </div>
@@ -238,7 +251,7 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
       ? `${X(0)},${Y(lv.eave)} ${X(len / 2)},${Y(lv.eave + rise)} ${X(len)},${Y(lv.eave)} ${X(len)},${Y(b.foundation)} ${X(0)},${Y(b.foundation)}`
       : `${X(0)},${Y(leftTop)} ${X(len)},${Y(rightTop)} ${X(len)},${Y(b.foundation)} ${X(0)},${Y(b.foundation)}`;
 
-    const ops = project.openings.filter((o) => o.face === face);
+    const ops = [...derivedOpenings(project), ...project.openings].filter((o) => o.face === face);
     const marks: [string, number][] = [["GL ±0", 0], ...lv.fl.map((h, i) => [`${i + 1}FL +${Math.round(h * 1000).toLocaleString()}`, h] as [string, number]), ["軒高 +" + Math.round(lv.eave * 1000).toLocaleString(), lv.eave], ["最高高さ +" + Math.round(lv.max * 1000).toLocaleString(), lv.max]];
 
     return (

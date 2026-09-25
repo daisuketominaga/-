@@ -10,11 +10,13 @@ import { downloadSvgAsPng } from "@/lib/store";
 type Props = {
   project: Project;
   setProject: (u: (p: Project) => Project) => void;
+  /** 印刷用: 図だけを描く */
+  readOnly?: boolean;
 };
 
 const PX = 44;
 
-export default function BuildableGrid({ project, setProject }: Props) {
+export default function BuildableGrid({ project, setProject, readOnly }: Props) {
   const { site, grid, building } = project;
   const svgRef = useRef<SVGSVGElement>(null);
   const flip = !!grid.flip;
@@ -141,7 +143,8 @@ export default function BuildableGrid({ project, setProject }: Props) {
   const bu = grid.u, bv = grid.v, bw = building.w, bd = building.d;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+    <div className={readOnly ? "block" : "grid gap-4 lg:grid-cols-[340px_1fr]"}>
+      {!readOnly && (
       <aside className="space-y-4">
         <div className="card space-y-2">
           <h3 className="text-sm font-semibold">1. 底辺にする辺</h3>
@@ -181,9 +184,10 @@ export default function BuildableGrid({ project, setProject }: Props) {
           <p className="text-[11px] text-slate-500">この枠が、そのまま間取り図の外形になります。境界までの距離は1階の間取り図にも出ます。</p>
         </div>
       </aside>
+      )}
 
       <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className={`flex flex-wrap items-center justify-between gap-2 ${readOnly ? "print-hide" : ""}`}>
           <div className="text-sm text-slate-600"><b>{project.name}</b> 建築可能範囲（910mmグリッド）</div>
           <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_建築可能範囲.png`)}>PNG保存</button>
         </div>
