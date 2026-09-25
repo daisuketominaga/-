@@ -13,7 +13,9 @@ export function useProject() {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
-        setProjectState(JSON.parse(raw) as Project);
+        const p = JSON.parse(raw) as Project;
+        if (!p.grid) p.grid = { baseEdge: 0, u: 0.91, v: 0.91 };
+        setProjectState(p);
         return;
       }
     } catch {

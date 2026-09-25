@@ -8,16 +8,16 @@ import PhotoBatch from "@/components/PhotoBatch";
 import SitePlan from "@/components/SitePlan";
 import FloorPlan from "@/components/FloorPlan";
 import Elevation from "@/components/Elevation";
-import Exterior from "@/components/Exterior";
+import BuildableGrid from "@/components/BuildableGrid";
 
-type Tab = "photo" | "site" | "floor" | "elevation" | "exterior";
+type Tab = "photo" | "site" | "grid" | "floor" | "elevation";
 
 const TABS: { id: Tab; label: string; short: string }[] = [
   { id: "photo", label: "写真一括補正", short: "写真" },
   { id: "site", label: "敷地図", short: "敷地" },
+  { id: "grid", label: "建築可能範囲", short: "グリッド" },
   { id: "floor", label: "間取り図", short: "間取り" },
   { id: "elevation", label: "立面図", short: "立面" },
-  { id: "exterior", label: "外観イメージ", short: "外観" },
 ];
 
 export default function Home() {
@@ -58,7 +58,7 @@ export default function Home() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">イチエン物件ビジュアル工房</h1>
           <p className="text-xs text-slate-500">
-            測量図 → 敷地図・間取り・立面・外観。現地写真は明るさを一括で統一。
+            測量図 → 敷地図 → 910グリッドで建築可能範囲 → 間取り → 立面。現地写真は明るさを一括で統一。
           </p>
         </div>
         {project && (
@@ -131,9 +131,9 @@ export default function Home() {
         <main>
           {tab === "photo" && <PhotoBatch />}
           {tab === "site" && <SitePlan project={project} setProject={setProject} />}
+          {tab === "grid" && <BuildableGrid project={project} setProject={setProject} />}
           {tab === "floor" && <FloorPlan project={project} setProject={setProject} />}
           {tab === "elevation" && <Elevation project={project} setProject={setProject} />}
-          {tab === "exterior" && <Exterior project={project} />}
         </main>
       )}
 

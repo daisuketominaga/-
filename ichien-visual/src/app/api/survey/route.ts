@@ -30,7 +30,7 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
     {"index":0,"length":8.40},
     {"index":4,"length":7.63,"road":true,"roadWidth":4.0,"roadLabel":"法42条1項1号 公道","note":"NTT柱有"}
   ],
-  "northDeg": 0,
+  "northDeg": 0,  // 北矢印が画面の真上から時計回りに何度傾いているか（真上なら0）
   "areaOverride": 79.43,
   "coords": [{"label":"K1","X":109.234,"Y":103.087}, ...],
   "notes": "読み取りで自信のない箇所を一言。求積表から計算した場合はその旨"

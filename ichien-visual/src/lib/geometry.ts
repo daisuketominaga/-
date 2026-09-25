@@ -168,3 +168,54 @@ export function roofRise(b: Building) {
 
 export const m2ToTsubo = (m2: number) => m2 / 3.30578;
 export const m2ToTatami = (m2: number) => m2 / 1.62;
+
+/** 面の外向き法線（世界座標） */
+export function faceNormalWorld(b: Building, face: Face): Pt {
+  const r = (b.rotDeg * Math.PI) / 180;
+  const xh = { x: Math.cos(r), y: Math.sin(r) };
+  const yh = { x: -Math.sin(r), y: Math.cos(r) };
+  switch (face) {
+    case "E":
+      return xh;
+    case "W":
+      return { x: -xh.x, y: -xh.y };
+    case "N":
+      return yh;
+    default:
+      return { x: -yh.x, y: -yh.y };
+  }
+}
+
+/** 面が向いている方角（8方位） */
+export function faceCompass(b: Building, face: Face, northDeg: number): string {
+  const v = faceNormalWorld(b, face);
+  const nd = (northDeg * Math.PI) / 180;
+  const north = { x: Math.sin(nd), y: Math.cos(nd) };
+  const east = { x: Math.cos(nd), y: -Math.sin(nd) };
+  const ang = ((Math.atan2(v.x * east.x + v.y * east.y, v.x * north.x + v.y * north.y) * 180) / Math.PI + 360) % 360;
+  const names = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
+  return names[Math.round(ang / 45) % 8];
+}
+
+/** 道路に最も向いている面 */
+export function roadFaceOf(site: Site, b: Building): Face | null {
+  const e = site.edges.find((x) => x.road);
+  if (!e) return null;
+  const a = site.points[e.index];
+  const c = site.points[(e.index + 1) % site.points.length];
+  const corners = buildingCorners(b);
+  const cx = corners.reduce((s, p) => s + p.x, 0) / 4;
+  const cy = corners.reduce((s, p) => s + p.y, 0) / 4;
+  const d = { x: (a.x + c.x) / 2 - cx, y: (a.y + c.y) / 2 - cy };
+  let best: Face = "S";
+  let bestDot = -Infinity;
+  for (const f of ["N", "S", "E", "W"] as Face[]) {
+    const n = faceNormalWorld(b, f);
+    const dot = n.x * d.x + n.y * d.y;
+    if (dot > bestDot) {
+      bestDot = dot;
+      best = f;
+    }
+  }
+  return best;
+}

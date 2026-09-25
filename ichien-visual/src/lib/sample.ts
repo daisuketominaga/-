@@ -1,4 +1,5 @@
 import type { Project, Floor, Opening } from "./types";
+import { buildingFromGrid } from "./grid";
 
 /** 参考画像（藤沢市鵠沼松が岡4丁目）に近い形のサンプル */
 export function sampleProject(): Project {
@@ -51,26 +52,26 @@ export function sampleProject(): Project {
     },
   ];
   const openings: Opening[] = [
-    { id: "o1", face: "W", floor: 1, offset: 0.4, width: 2.6, height: 2.2, sill: 0, kind: "garage" },
-    { id: "o2", face: "W", floor: 1, offset: 3.6, width: 0.9, height: 2.2, sill: 0, kind: "door" },
-    { id: "o3", face: "W", floor: 2, offset: 2.0, width: 0.4, height: 2.4, sill: 0.3, kind: "slit" },
-    { id: "o4", face: "S", floor: 2, offset: 0.3, width: 2.4, height: 2.0, sill: 0.2, kind: "window" },
-    { id: "o5", face: "S", floor: 2, offset: 3.4, width: 1.8, height: 1.6, sill: 0.8, kind: "window" },
-    { id: "o6", face: "S", floor: 3, offset: 0.5, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o7", face: "S", floor: 3, offset: 3.6, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o8", face: "E", floor: 1, offset: 1.0, width: 0.6, height: 0.6, sill: 1.5, kind: "window" },
-    { id: "o9", face: "E", floor: 2, offset: 3.0, width: 1.6, height: 2.0, sill: 0.2, kind: "window" },
-    { id: "o10", face: "E", floor: 3, offset: 6.0, width: 1.4, height: 1.2, sill: 0.9, kind: "window" },
-    { id: "o11", face: "N", floor: 1, offset: 4.2, width: 1.2, height: 1.0, sill: 1.0, kind: "window" },
-    { id: "o12", face: "N", floor: 3, offset: 1.2, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
+    { id: "o1", face: "S", floor: 1, offset: 0.4, width: 2.6, height: 2.2, sill: 0, kind: "garage" },
+    { id: "o2", face: "S", floor: 1, offset: 3.6, width: 0.9, height: 2.2, sill: 0, kind: "door" },
+    { id: "o3", face: "S", floor: 2, offset: 2.0, width: 0.4, height: 2.4, sill: 0.3, kind: "slit" },
+    { id: "o4", face: "E", floor: 2, offset: 0.3, width: 2.4, height: 2.0, sill: 0.2, kind: "window" },
+    { id: "o5", face: "E", floor: 2, offset: 3.4, width: 1.8, height: 1.6, sill: 0.8, kind: "window" },
+    { id: "o6", face: "E", floor: 3, offset: 0.5, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
+    { id: "o7", face: "E", floor: 3, offset: 3.6, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
+    { id: "o8", face: "N", floor: 1, offset: 1.0, width: 0.6, height: 0.6, sill: 1.5, kind: "window" },
+    { id: "o9", face: "N", floor: 2, offset: 3.0, width: 1.6, height: 2.0, sill: 0.2, kind: "window" },
+    { id: "o10", face: "N", floor: 3, offset: 6.0, width: 1.4, height: 1.2, sill: 0.9, kind: "window" },
+    { id: "o11", face: "W", floor: 1, offset: 4.2, width: 1.2, height: 1.0, sill: 1.0, kind: "window" },
+    { id: "o12", face: "W", floor: 3, offset: 1.2, width: 1.6, height: 1.2, sill: 0.9, kind: "window" },
   ];
-  const sx = 7.2 / 6.2;
-  const sy = 7.8 / 8.3;
-  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const sx = 7.28 / 6.2;
+  const sy = 6.825 / 8.3;
+  const r2 = (v: number) => Math.round(Math.round(v / 0.455) * 0.455 * 1000) / 1000;
   for (const f of floors) {
     f.rooms = f.rooms.map((r) => ({ ...r, x: r2(r.x * sx), y: r2(r.y * sy), w: r2(r.w * sx), d: r2(r.d * sy) }));
   }
-  return {
+  const project: Project = {
     name: "藤沢市鵠沼松が岡4丁目",
     address: "神奈川県藤沢市鵠沼松が岡4丁目",
     catchCopy: "海と街の心地よさを感じる、開放的な暮らし。",
@@ -91,17 +92,18 @@ export function sampleProject(): Project {
       setback: 0.5,
       fireproofException: false,
     },
+    grid: { baseEdge: 4, u: 0.455, v: 0.91 },
     building: {
       x: 1.0,
       y: 0.8,
-      w: 7.2,
-      d: 7.8,
+      w: 7.28,
+      d: 6.825,
       rotDeg: 0,
       floors: 3,
       floorHeights: [2.3, 2.3, 2.2],
       foundation: 0.6,
       roof: "shed",
-      roofHighSide: "E",
+      roofHighSide: "N",
       roofPitchSun: 1.5,
       wallColor: "#1f2530",
       accentColor: "#a86b3c",
@@ -113,11 +115,13 @@ export function sampleProject(): Project {
     openings,
     updatedAt: new Date().toISOString(),
   };
+  project.building = buildingFromGrid(project.site, project.grid, project.building.w, project.building.d, project.building);
+  return project;
 }
 
 export function emptyProject(): Project {
   const p = sampleProject();
-  return {
+  const e: Project = {
     ...p,
     name: "新しい物件",
     address: "",
@@ -138,7 +142,8 @@ export function emptyProject(): Project {
       ],
       areaOverride: undefined,
     },
-    building: { ...p.building, x: 1.5, y: 1.5, w: 6, d: 7 },
+    grid: { baseEdge: 3, u: 0.91, v: 0.91 },
+    building: { ...p.building, x: 0.91, y: 0.91, w: 6.37, d: 7.28, rotDeg: 0 },
     floors: [
       { level: 1, rooms: [] },
       { level: 2, rooms: [] },
@@ -146,4 +151,6 @@ export function emptyProject(): Project {
     ],
     openings: [],
   };
+  e.building = buildingFromGrid(e.site, e.grid, e.building.w, e.building.d, e.building);
+  return e;
 }

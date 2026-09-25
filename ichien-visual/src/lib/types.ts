@@ -113,11 +113,25 @@ export type Opening = {
   kind: "window" | "door" | "garage" | "slit";
 };
 
+/** 建築可能範囲グリッドの設定 */
+export type GridSetting = {
+  /** 底辺にする敷地の辺（points[i] → points[i+1]） */
+  baseEdge: number;
+  /** 底辺の始点から、辺に沿った建物の位置（m、455mm刻み） */
+  u: number;
+  /** 底辺から内側へ入った建物の位置（m、455mm刻み） */
+  v: number;
+};
+
+export const MODULE = 0.91;
+export const HALF = 0.455;
+
 export type Project = {
   name: string;
   address: string;
   catchCopy: string;
   site: Site;
+  grid: GridSetting;
   building: Building;
   floors: Floor[];
   openings: Opening[];

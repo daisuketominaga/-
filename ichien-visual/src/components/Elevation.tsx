@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { Project, Face, Opening, Building } from "@/lib/types";
-import { faceLength, roofRise, round } from "@/lib/geometry";
+import { faceLength, roofRise, round, faceCompass, roadFaceOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 
 type Props = {
@@ -10,11 +10,14 @@ type Props = {
   setProject: (u: (p: Project) => Project) => void;
 };
 
-const FACE_LABEL: Record<Face, string> = { N: "北立面図", S: "南立面図", E: "東立面図", W: "西立面図" };
-/** 面を外から見たとき、左側と右側にある方角 */
-const SIDES: Record<Face, [string, string]> = { N: ["東", "西"], S: ["西", "東"], E: ["南", "北"], W: ["北", "南"] };
+/** 建物は「建築可能範囲」の底辺に合わせて置くので、面は底辺基準で呼ぶ */
+const FACE_BASE: Record<Face, string> = { S: "底辺側", N: "奥側", W: "左側", E: "右側" };
+/** 面を外から見たとき、左側と右側にある面 */
+const SIDES_FACE: Record<Face, [Face, Face]> = { N: ["E", "W"], S: ["W", "E"], E: ["S", "N"], W: ["N", "S"] };
+function faceTitle(project: Project, face: Face) {
+  return `${FACE_BASE[face]}立面図（${faceCompass(project.building, face, project.site.northDeg)}）`;
+}
 const SLAB = 0.4;
-const FACE_JA_SHORT: Record<Face, string> = { N: "北", S: "南", E: "東", W: "西" };
 
 /** 各階の床レベル（GLからの高さ）と最高高さ */
 export function levels(b: Building) {
@@ -32,7 +35,7 @@ export function levels(b: Building) {
 
 export default function Elevation({ project, setProject }: Props) {
   const { building: b, openings, site } = project;
-  const [editFace, setEditFace] = useState<Face>("W");
+  const [editFace, setEditFace] = useState<Face>("S");
   const [sel, setSel] = useState<string | null>(null);
   const allRef = useRef<SVGSVGElement>(null);
   const faceRefs = useRef<Record<Face, SVGSVGElement | null>>({ N: null, S: null, E: null, W: null });
@@ -45,21 +48,9 @@ export default function Elevation({ project, setProject }: Props) {
     setSel(o.id);
   };
 
-  const roadFace: Face | null = (() => {
-    const e = site.edges.find((x) => x.road);
-    if (!e) return null;
-    const a = site.points[e.index];
-    const c = site.points[(e.index + 1) % site.points.length];
-    const mx = (a.x + c.x) / 2;
-    const my = (a.y + c.y) / 2;
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.d / 2;
-    const dx = mx - cx;
-    const dy = my - cy;
-    return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "W" : "E") : dy < 0 ? "S" : "N";
-  })();
+  const roadFace: Face | null = roadFaceOf(site, b);
 
-  const title = `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
+  const title = `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸（${FACE_BASE[b.roofHighSide]}が高い）` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
@@ -86,10 +77,9 @@ export default function Elevation({ project, setProject }: Props) {
                 <div>
                   <span className="label">{b.roof === "shed" ? "高い側（軒ゼロ側の反対）" : "棟の向き"}</span>
                   <select className="field" value={b.roofHighSide} onChange={(e) => setB({ roofHighSide: e.target.value as Building["roofHighSide"] })}>
-                    <option value="N">北</option>
-                    <option value="S">南</option>
-                    <option value="E">東</option>
-                    <option value="W">西</option>
+                    {(["S", "N", "W", "E"] as Face[]).map((f) => (
+                      <option key={f} value={f}>{FACE_BASE[f]}（{faceCompass(b, f, site.northDeg)}）</option>
+                    ))}
                   </select>
                 </div>
               </>
@@ -116,9 +106,9 @@ export default function Elevation({ project, setProject }: Props) {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">窓・ドア</h3>
             <div className="flex gap-1">
-              {(["W", "S", "E", "N"] as Face[]).map((f) => (
+              {(["S", "N", "W", "E"] as Face[]).map((f) => (
                 <button key={f} className={`rounded px-2 py-0.5 text-xs ${editFace === f ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setEditFace(f)}>
-                  {f === "N" ? "北" : f === "S" ? "南" : f === "E" ? "東" : "西"}{roadFace === f ? "(道路)" : ""}
+                  {FACE_BASE[f]}{roadFace === f ? "(道路)" : ""}
                 </button>
               ))}
             </div>
@@ -166,11 +156,11 @@ export default function Elevation({ project, setProject }: Props) {
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {(["W", "S", "E", "N"] as Face[]).map((f) => (
+          {(["S", "N", "W", "E"] as Face[]).map((f) => (
             <div key={f} className={`card p-2 ${editFace === f ? "ring-2 ring-brand-100" : ""}`} onClick={() => setEditFace(f)}>
               <div className="mb-1 flex items-center justify-between text-xs">
-                <b>{FACE_LABEL[f]}{roadFace === f ? "（道路側）" : ""}</b>
-                <button className="text-slate-400 hover:text-slate-700" onClick={(e) => { e.stopPropagation(); const s = faceRefs.current[f]; if (s) downloadSvgAsPng(s, `${project.name}_${FACE_LABEL[f]}.png`); }}>PNG</button>
+                <b>{faceTitle(project, f)}{roadFace === f ? "（道路側）" : ""}</b>
+                <button className="text-slate-400 hover:text-slate-700" onClick={(e) => { e.stopPropagation(); const s = faceRefs.current[f]; if (s) downloadSvgAsPng(s, `${project.name}_${faceTitle(project, f)}.png`); }}>PNG</button>
               </div>
               <ElevationSvg ref={(el) => { faceRefs.current[f] = el; }} project={project} face={f} sel={sel} onSelect={setSel} />
             </div>
@@ -219,10 +209,9 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
 
     // 屋根の形（この面から見た輪郭）
     // 片流れ: 高い側が左右どちらか or 手前/奥（水平線）
-    const [leftSide, rightSide] = SIDES[face];
-    const sideDir: Record<string, Face> = { 北: "N", 南: "S", 東: "E", 西: "W" };
-    const leftF = sideDir[leftSide];
-    const rightF = sideDir[rightSide];
+    const [leftF, rightF] = SIDES_FACE[face];
+    const leftSide = faceCompass(b, leftF, project.site.northDeg);
+    const rightSide = faceCompass(b, rightF, project.site.northDeg);
     let roofPath = "";
     let leftTop = lv.eave;
     let rightTop = lv.eave;
@@ -255,7 +244,7 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
     return (
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif" }}>
         {standalone && <rect width={W} height={H} fill="#fff" />}
-        {standalone && <text x={W / 2} y={16} textAnchor="middle" fontSize={13} fontWeight={700}>{FACE_LABEL[face]}</text>}
+        {standalone && <text x={W / 2} y={16} textAnchor="middle" fontSize={13} fontWeight={700}>{faceTitle(project, face)}</text>}
         {/* 縦板張りのパターン */}
         <defs>
           <pattern id={`siding-${face}`} width={6} height={6} patternUnits="userSpaceOnUse">
@@ -283,7 +272,7 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
         {b.roof === "shed" && b.roofHighSide !== face && b.roofHighSide !== leftF && b.roofHighSide !== rightF && (
           <g>
             <rect x={X(0)} y={Y(lv.eave + rise)} width={len * px} height={rise * px} fill="#3a3f47" stroke="#111" strokeWidth={1} />
-            <text x={X(len / 2)} y={Y(lv.eave + rise / 2) + 4} textAnchor="middle" fontSize={9} fill="#ddd">屋根面（奥＝{FACE_JA_SHORT[b.roofHighSide]}へ上る片流れ）</text>
+            <text x={X(len / 2)} y={Y(lv.eave + rise / 2) + 4} textAnchor="middle" fontSize={9} fill="#ddd">屋根面（奥へ上る片流れ）</text>
           </g>
         )}
         {/* 屋根の笠木 */}
@@ -345,12 +334,12 @@ export const AllElevationsSvg = forwardRef<SVGSVGElement, { project: Project; ti
     <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif" }}>
       <rect width={W} height={H} fill="#fff" />
       <text x={W / 2} y={34} textAnchor="middle" fontSize={16} fontWeight={700}>{title}</text>
-      {(["W", "S", "E", "N"] as Face[]).map((f, i) => {
+      {(["S", "N", "W", "E"] as Face[]).map((f, i) => {
         const cx = 20 + (i % 2) * cellW;
         const cy = 60 + Math.floor(i / 2) * cellH;
         return (
           <g key={f} transform={`translate(${cx} ${cy})`}>
-            <text x={cellW / 2} y={14} textAnchor="middle" fontSize={14} fontWeight={700}>{FACE_LABEL[f]}{roadFace === f ? "（道路側）" : ""}</text>
+            <text x={cellW / 2} y={14} textAnchor="middle" fontSize={14} fontWeight={700}>{faceTitle(project, f)}{roadFace === f ? "（道路側）" : ""}</text>
             <svg x={0} y={20} width={cellW - 20} height={cellH - 30} viewBox={`0 0 ${faceLength(b, f) * 30 + 200} ${levels(b).max * 30 + 70}`} preserveAspectRatio="xMidYMid meet">
               <ElevationSvg project={project} face={f} px={30} standalone={false} />
             </svg>

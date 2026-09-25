@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import type { Project, Room, RoomType, Floor } from "@/lib/types";
-import { ROOM_FILL, ROOM_LABEL, TATAMI_M2, TSUBO_M2 } from "@/lib/types";
+import { ROOM_FILL, ROOM_LABEL, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 
@@ -12,8 +12,7 @@ type Props = {
 };
 
 const PX = 60; // px per m
-const GRID = 0.1;
-const snap = (v: number) => Math.round(v / GRID) * GRID;
+const snap = (v: number) => Math.round(v / HALF) * HALF;
 
 const ROOM_TYPES: RoomType[] = ["ldk", "living", "kitchen", "bedroom", "japanese", "study", "entrance", "hall", "toilet", "bath", "washroom", "closet", "storage", "stairs", "garage", "balcony", "other"];
 
@@ -80,7 +79,7 @@ export default function FloorPlan({ project, setProject }: Props) {
   }, [project.floors]);
 
   const addRoom = (type: RoomType) => {
-    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: 0, y: 0, w: Math.min(3, building.w), d: Math.min(3, building.d) };
+    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: 0, y: 0, w: Math.min(2.73, building.w), d: Math.min(2.73, building.d) };
     setFloor((f) => ({ ...f, rooms: [...f.rooms, r] }));
     setSel(r.id);
   };
@@ -172,6 +171,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             ))}
             {floor.rooms.length === 0 && <div className="text-xs text-slate-400">部屋がありません。上のボタンで追加するか「ゼロから提案」を押してください。</div>}
           </div>
+          <p className="text-[11px] text-slate-500">外形 {building.w.toFixed(3)}m × {building.d.toFixed(3)}m は「建築可能範囲」画面で決めます。部屋は455mm刻みで動きます。</p>
           <div className="flex gap-2">
             <button className="btn-ghost text-xs" onClick={() => { const src = project.floors.find((f) => f.level === level - 1); if (src) setFloor((f) => ({ ...f, rooms: src.rooms.map((r) => ({ ...r, id: uid() })) })); }} disabled={level <= 1}>
               下の階をコピー
@@ -224,7 +224,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             <text x={ox} y={oy - 14} fontSize={16} fontWeight={700} fill="#222">
               {level}階　床面積 {round(floorArea(floor), 2)}㎡{balconyArea(floor) ? `（バルコニー ${round(balconyArea(floor), 2)}㎡ 別）` : ""}
             </text>
-            <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg} />
+            <NorthMark x={W - 30} y={oy - 10} deg={project.site.northDeg + project.building.rotDeg} />
           </svg>
         </div>
 
@@ -256,17 +256,23 @@ function NumI({ label, v, onChange }: { label: string; v: number; onChange: (v: 
   return (
     <label className="flex items-center gap-0.5">
       <span className="text-[10px] text-slate-400">{label}</span>
-      <input type="number" step="0.1" className="field px-1 py-0.5" value={v} onChange={(e) => onChange(Number(e.target.value))} />
+      <input type="number" step="0.455" className="field px-1 py-0.5" value={v} onChange={(e) => onChange(Math.round((Number(e.target.value) / 0.455)) * 0.455)} />
     </label>
   );
 }
 
+/** deg = 画面上を0として時計回りの度数 */
 export function NorthMark({ x, y, deg }: { x: number; y: number; deg: number }) {
+  const r = (deg * Math.PI) / 180;
+  const tx = Math.sin(r) * 26;
+  const ty = -Math.cos(r) * 26;
   return (
-    <g transform={`translate(${x} ${y}) rotate(${-deg})`}>
-      <line x1={0} y1={8} x2={0} y2={-14} stroke="#333" strokeWidth={1.2} />
-      <polygon points="0,-18 4,-8 -4,-8" fill="#333" />
-      <text y={-22} textAnchor="middle" fontSize={11} fontWeight={700}>N</text>
+    <g transform={`translate(${x} ${y})`}>
+      <g transform={`rotate(${deg})`}>
+        <line x1={0} y1={8} x2={0} y2={-14} stroke="#333" strokeWidth={1.2} />
+        <polygon points="0,-18 4,-8 -4,-8" fill="#333" />
+      </g>
+      <text x={tx} y={ty + 4} textAnchor="middle" fontSize={11} fontWeight={700}>N</text>
     </g>
   );
 }
@@ -288,8 +294,14 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
   const wallW = compact ? 4 : 6;
   return (
     <g>
-      {/* 外壁 */}
+      {/* 外壁と910グリッド */}
       <rect x={ox} y={oy} width={b.w * px} height={b.d * px} fill="#fbf7ef" stroke="#1b1b1b" strokeWidth={wallW} />
+      {Array.from({ length: Math.floor(b.w / HALF) }, (_, i) => (i + 1) * HALF).map((u) => (
+        <line key={"gu" + u} x1={ox + u * px} y1={oy} x2={ox + u * px} y2={oy + b.d * px} stroke={Math.abs((u / MODULE) % 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} />
+      ))}
+      {Array.from({ length: Math.floor(b.d / HALF) }, (_, i) => (i + 1) * HALF).map((v) => (
+        <line key={"gv" + v} x1={ox} y1={oy + (b.d - v) * px} x2={ox + b.w * px} y2={oy + (b.d - v) * px} stroke={Math.abs((v / MODULE) % 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} />
+      ))}
       {floor.rooms.map((r) => {
         const p = toPx(r.x, r.y + r.d);
         const w = r.w * px;
@@ -300,7 +312,7 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
         return (
           <g key={r.id} onPointerDown={(e) => { e.stopPropagation(); onSelect?.(r.id); onStartDrag?.(r, "move", e); }} className={onStartDrag ? "cursor-move" : ""}>
             <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
-            <RoomDecoration r={r} x={p.x} y={p.y} w={w} h={h} px={px} />
+            {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} />}
             <text x={p.x + w / 2} y={p.y + h / 2 + (showTatami ? -2 : 4)} textAnchor="middle" fontSize={Math.min(compact ? 12 : 15, Math.max(8, w / 5))} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
               {r.name}
             </text>
@@ -319,93 +331,16 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, onSelect, onStartDra
   );
 }
 
-/** 家具・設備の簡易アイコン */
-function RoomDecoration({ r, x, y, w, h, px }: { r: Room; x: number; y: number; w: number; h: number; px: number }) {
-  const s = px / 60; // スケール係数
-  switch (r.type) {
-    case "stairs": {
-      const n = Math.max(6, Math.floor(h / (0.25 * px)));
-      return (
-        <g stroke="#555" strokeWidth={1}>
-          {Array.from({ length: n }, (_, i) => (
-            <line key={i} x1={x} y1={y + ((i + 1) * h) / (n + 1)} x2={x + w} y2={y + ((i + 1) * h) / (n + 1)} />
-          ))}
-          <line x1={x + w / 2} y1={y + h - 4} x2={x + w / 2} y2={y + 6} stroke="#c0392b" markerEnd="url(#arrowUp)" />
-          <defs>
-            <marker id="arrowUp" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 z" fill="#c0392b" />
-            </marker>
-          </defs>
-        </g>
-      );
-    }
-    case "bath":
-      return <rect x={x + w * 0.2} y={y + h * 0.2} width={w * 0.6} height={h * 0.6} rx={8 * s} fill="#fff" stroke="#6c8ea8" strokeWidth={1.5} />;
-    case "toilet":
-      return (
-        <g fill="#fff" stroke="#6c8ea8" strokeWidth={1.2}>
-          <ellipse cx={x + w / 2} cy={y + h * 0.6} rx={Math.min(w, h) * 0.22} ry={Math.min(w, h) * 0.28} />
-          <rect x={x + w / 2 - Math.min(w, h) * 0.22} y={y + h * 0.15} width={Math.min(w, h) * 0.44} height={Math.min(w, h) * 0.2} />
-        </g>
-      );
-    case "washroom":
-      return <rect x={x + w * 0.1} y={y + h * 0.1} width={w * 0.35} height={h * 0.25} fill="#fff" stroke="#6c8ea8" strokeWidth={1.2} />;
-    case "kitchen":
-    case "ldk": {
-      const kw = Math.min(w * 0.5, 2.4 * px);
-      return (
-        <g>
-          <rect x={x + w - kw - 6 * s} y={y + 6 * s} width={kw} height={0.65 * px} fill="#fff" stroke="#555" strokeWidth={1.2} />
-          <circle cx={x + w - kw + 0.4 * px} cy={y + 6 * s + 0.33 * px} r={0.16 * px} fill="none" stroke="#555" />
-          {r.type === "ldk" && (
-            <>
-              <rect x={x + w * 0.3} y={y + h * 0.42} width={Math.min(w * 0.4, 1.6 * px)} height={0.8 * px} fill="#c99b6a" stroke="#7a5a3a" />
-              <rect x={x + 10 * s} y={y + h - 1.2 * px} width={Math.min(w * 0.45, 2.0 * px)} height={0.85 * px} rx={6 * s} fill="#f2c94c" stroke="#a37f1e" />
-            </>
-          )}
-        </g>
-      );
-    }
-    case "bedroom":
-    case "japanese": {
-      const bw = Math.min(w * 0.45, 1.5 * px);
-      const bh = Math.min(h * 0.55, 2.0 * px);
-      return (
-        <g>
-          <rect x={x + w - bw - 8 * s} y={y + 8 * s} width={bw} height={bh} rx={4 * s} fill="#cfd9e6" stroke="#6c7a8a" />
-          <rect x={x + w - bw - 4 * s} y={y + 12 * s} width={bw - 8 * s} height={bh * 0.22} rx={3 * s} fill="#fff" stroke="#6c7a8a" />
-        </g>
-      );
-    }
-    case "garage":
-      return (
-        <g>
-          <rect x={x + w * 0.15} y={y + h * 0.12} width={w * 0.7} height={h * 0.76} rx={10 * s} fill="#4f7ea8" stroke="#2c4a63" strokeWidth={1.5} />
-          <rect x={x + w * 0.25} y={y + h * 0.2} width={w * 0.5} height={h * 0.25} rx={4 * s} fill="#dbe9f5" />
-        </g>
-      );
-    case "closet":
-    case "storage":
-      return (
-        <g stroke="#999" strokeWidth={0.8}>
-          {Array.from({ length: 4 }, (_, i) => (
-            <line key={i} x1={x + 4} y1={y + ((i + 1) * h) / 5} x2={x + w - 4} y2={y + ((i + 1) * h) / 5} />
-          ))}
-        </g>
-      );
-    case "balcony":
-      return (
-        <g stroke="#8a9099" strokeWidth={0.8}>
-          {Array.from({ length: Math.max(2, Math.floor(w / (0.3 * px))) }, (_, i) => (
-            <line key={i} x1={x + (i * 0.3 + 0.15) * px} y1={y} x2={x + (i * 0.3 + 0.15) * px} y2={y + h} />
-          ))}
-        </g>
-      );
-    case "entrance":
-      return <path d={`M ${x + 2} ${y + h - 2} a ${Math.min(w, h) * 0.8} ${Math.min(w, h) * 0.8} 0 0 1 ${Math.min(w, h) * 0.8} ${-Math.min(w, h) * 0.8}`} fill="none" stroke="#555" strokeWidth={1} />;
-    default:
-      return null;
-  }
+/** 階段だけは段の線を入れる（家具は描かない） */
+function StairLines({ x, y, w, h, px }: { x: number; y: number; w: number; h: number; px: number }) {
+  const n = Math.max(6, Math.floor(h / (0.23 * px)));
+  return (
+    <g stroke="#666" strokeWidth={0.8}>
+      {Array.from({ length: n }, (_, i) => (
+        <line key={i} x1={x} y1={y + ((i + 1) * h) / (n + 1)} x2={x + w} y2={y + ((i + 1) * h) / (n + 1)} />
+      ))}
+    </g>
+  );
 }
 
 import { forwardRef } from "react";
@@ -436,7 +371,7 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
               <text x={cx + 20} y={cy + 18} fontSize={14} fontWeight={700}>
                 {f.level}階　床面積 {round(floorArea(f), 2)}㎡{balconyArea(f) ? `（バルコニー ${round(balconyArea(f), 2)}㎡ 別）` : ""}
               </text>
-              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg} />
+              <NorthMark x={cx + cellW - 40} y={cy + 24} deg={project.site.northDeg + project.building.rotDeg} />
               <FloorSvg floor={f} project={project} ox={cx + 30} oy={cy + 50} px={px} compact />
             </g>
           );

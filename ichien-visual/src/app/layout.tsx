@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "イチエン物件ビジュアル工房",
   description:
-    "測量図から敷地図・間取り図・立面図・外観イメージを作り、現地写真の明るさを一括で整える、イチエン不動産の社内ツール",
+    "測量図から敷地図・建築可能範囲・間取り図・立面図を作り、現地写真の明るさを一括で整える、イチエン不動産の社内ツール",
 };
 
 export const viewport: Viewport = {

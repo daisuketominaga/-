@@ -10,6 +10,7 @@ const SYSTEM = `あなたは日本の木造住宅の間取りを設計する建�
 座標のルール:
 - 単位はメートル。建物外形（幅 w = 東西、奥行 d = 南北）の左下（南西）が原点。x は東へ、y は北へ。
 - 各部屋は矩形 {id, name, type, x, y, w, d}。必ず 0 ≤ x, x+w ≤ 建物幅、0 ≤ y, y+d ≤ 建物奥行。
+- x, y, w, d はすべて 0.455 の倍数（尺モジュール。1マス=0.91m、半マス=0.455m）にする。
 - 部屋同士は重ならないこと。建物内に隙間が残らないよう、廊下や収納で埋める。
 - 階段は全階で同じ位置・同じ大きさにする（type: "stairs"、1.0×2.0m 程度以上）。
 - バルコニーは type "balcony" で建物外形の中に置く（床面積には含めない）。
@@ -50,18 +51,19 @@ export async function POST(req: NextRequest) {
     const floors = json.floors.map((f: { level: number; rooms: Array<Record<string, unknown>> }) => ({
       level: Number(f.level),
       rooms: (f.rooms || []).map((r) => {
-        const x = Math.max(0, Math.min(b.w, Number(r.x) || 0));
-        const y = Math.max(0, Math.min(b.d, Number(r.y) || 0));
-        const w = Math.max(0.3, Math.min(b.w - x, Number(r.w) || 1));
-        const d = Math.max(0.3, Math.min(b.d - y, Number(r.d) || 1));
+        const snap = (v: number) => Math.round(v / 0.455) * 0.455;
+        const x = Math.max(0, Math.min(b.w, snap(Number(r.x) || 0)));
+        const y = Math.max(0, Math.min(b.d, snap(Number(r.y) || 0)));
+        const w = Math.max(0.455, Math.min(b.w - x, snap(Number(r.w) || 0.91)));
+        const d = Math.max(0.455, Math.min(b.d - y, snap(Number(r.d) || 0.91)));
         return {
           id: String(r.id || Math.random().toString(36).slice(2, 9)),
           name: String(r.name || "部屋"),
           type: String(r.type || "other"),
-          x: +x.toFixed(2),
-          y: +y.toFixed(2),
-          w: +w.toFixed(2),
-          d: +d.toFixed(2),
+          x: +x.toFixed(3),
+          y: +y.toFixed(3),
+          w: +w.toFixed(3),
+          d: +d.toFixed(3),
         };
       }),
     }));

@@ -3,16 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Project, Pt, Site, SiteEdge } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import {
-  polygonArea,
-  centroid,
-  bbox,
-  insetPolygon,
-  dist,
-  round,
-  buildingCorners,
-  clearanceReport,
-} from "@/lib/geometry";
+import { polygonArea, centroid, bbox, insetPolygon, dist, round } from "@/lib/geometry";
 import { downloadSvgAsPng } from "@/lib/store";
 import SurveyImport from "./SurveyImport";
 
@@ -24,10 +15,9 @@ type Props = {
 const PX_PER_M = 40;
 
 export default function SitePlan({ project, setProject }: Props) {
-  const { site, building } = project;
+  const { site } = project;
   const svgRef = useRef<SVGSVGElement>(null);
-  const [drag, setDrag] = useState<{ kind: "pt"; i: number } | { kind: "bld"; dx: number; dy: number } | null>(null);
-  const [showBuilding, setShowBuilding] = useState(true);
+  const [drag, setDrag] = useState<{ kind: "pt"; i: number } | null>(null);
   const [showSetback, setShowSetback] = useState(true);
 
   const setSite = (u: (s: Site) => Site) => setProject((p) => ({ ...p, site: u(p.site) }));
@@ -35,15 +25,6 @@ export default function SitePlan({ project, setProject }: Props) {
   // ===== 計算 =====
   const areaCalc = polygonArea(site.points);
   const area = site.areaOverride ?? areaCalc;
-  const bArea = building.w * building.d;
-  const coverage = (bArea / area) * 100;
-  const maxBArea = (area * site.coverageRatio) / 100;
-  const totalFloor = project.floors.reduce(
-    (s, f) => s + f.rooms.filter((r) => r.type !== "balcony").reduce((a, r) => a + r.w * r.d, 0),
-    0
-  );
-  const far = (totalFloor / area) * 100;
-  const clearance = clearanceReport(site, building);
   const setbackPoly = useMemo(() => insetPolygon(site.points, site.setback), [site.points, site.setback]);
 
   // ===== 描画範囲（道路帯を含めて余白をとる）=====
@@ -81,22 +62,14 @@ export default function SitePlan({ project, setProject }: Props) {
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag) return;
     const p = clientToLocal(e);
-    if (drag.kind === "pt") {
-      setSite((s) => ({
-        ...s,
-        points: s.points.map((q, i) => (i === drag.i ? { x: round(p.x, 2), y: round(p.y, 2) } : q)),
-      }));
-    } else {
-      setProject((pr) => ({
-        ...pr,
-        building: { ...pr.building, x: round(p.x - drag.dx, 2), y: round(p.y - drag.dy, 2) },
-      }));
-    }
+    setSite((s) => ({
+      ...s,
+      points: s.points.map((q, i) => (i === drag.i ? { x: round(p.x, 2), y: round(p.y, 2) } : q)),
+    }));
   };
 
   const polyPx = site.points.map(toPx);
   const cen = toPx(centroid(site.points));
-  const corners = buildingCorners(building).map(toPx);
 
   // 辺の外側方向（寸法線・道路帯用）
   const ccw = (() => {
@@ -155,7 +128,7 @@ export default function SitePlan({ project, setProject }: Props) {
             setProject((p) => ({
               ...p,
               site: { ...p.site, ...s },
-              building: { ...p.building, x: 1.0, y: 1.0 },
+              grid: { baseEdge: (s.edges ?? []).find((e) => e.road)?.index ?? 0, u: 0.455, v: 0.455 },
             }))
           }
         />
@@ -243,46 +216,11 @@ export default function SitePlan({ project, setProject }: Props) {
           </div>
         </div>
 
-        <div className="card space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">建物の配置</h3>
-            <label className="flex items-center gap-1 text-xs">
-              <input type="checkbox" checked={showBuilding} onChange={(e) => setShowBuilding(e.target.checked)} />
-              表示
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-sm">
-            <Num label="幅(東西) m" v={building.w} onChange={(v) => setProject((p) => ({ ...p, building: { ...p.building, w: v } }))} />
-            <Num label="奥行(南北) m" v={building.d} onChange={(v) => setProject((p) => ({ ...p, building: { ...p.building, d: v } }))} />
-            <Num label="回転 度" v={building.rotDeg} step={1} onChange={(v) => setProject((p) => ({ ...p, building: { ...p.building, rotDeg: v } }))} />
-            <Num label="位置 X m" v={building.x} onChange={(v) => setProject((p) => ({ ...p, building: { ...p.building, x: v } }))} />
-            <Num label="位置 Y m" v={building.y} onChange={(v) => setProject((p) => ({ ...p, building: { ...p.building, y: v } }))} />
-            <div className="flex items-end">
-              <button
-                className="btn-ghost w-full justify-center"
-                onClick={() => {
-                  // 離れ線の内側に収まるよう自動配置（内接矩形の左下に寄せる）
-                  const b = bbox(setbackPoly);
-                  setProject((p) => ({ ...p, building: { ...p.building, x: round(b.minX, 2), y: round(b.minY, 2), rotDeg: 0 } }));
-                }}
-              >
-                自動で寄せる
-              </button>
-            </div>
-          </div>
-          <div className="rounded bg-slate-50 p-2 text-xs leading-relaxed">
-            <div>建築面積 <b>{round(bArea, 2)} m²</b> ／ 建ぺい率 <b className={coverage > site.coverageRatio ? "text-red-600" : ""}>{round(coverage, 1)}%</b>（上限 {site.coverageRatio}% → {round(maxBArea, 2)} m² まで）</div>
-            <div>延床（間取りから） <b>{round(totalFloor, 2)} m²</b> ／ 容積率 <b className={far > site.farRatio ? "text-red-600" : ""}>{round(far, 1)}%</b>（上限 {site.farRatio}%）</div>
-            {clearance.violations.length > 0 && !site.fireproofException && (
-              <div className="mt-1 text-red-600">
-                ⚠ 境界から {site.setback} m 未満の隅が {clearance.violations.length} か所あります（民法234条）。
-              </div>
-            )}
-            {clearance.violations.length === 0 && <div className="mt-1 text-emerald-700">✓ 隅はすべて離れ {clearance.required} m 以上です</div>}
-          </div>
-          <label className="flex items-center gap-1 text-xs">
+        <div className="card text-xs text-slate-500">
+          建物の枠と建ぺい率は、次の「建築可能範囲」画面で910mmグリッドの上に置きます。
+          <label className="mt-2 flex items-center gap-1">
             <input type="checkbox" checked={showSetback} onChange={(e) => setShowSetback(e.target.checked)} />
-            離れ線を表示
+            離れ線（{site.setback} m）を表示
           </label>
         </div>
       </aside>
@@ -400,13 +338,13 @@ export default function SitePlan({ project, setProject }: Props) {
                 const len = e.length ?? dist(a, b);
                 if (len < 0.05) return null;
                 const n = outwardNormal(i);
-                const off = e.road ? -0.55 : 0.75; // 道路側は内側に書く
+                const short = len < 1.0;
+                const off = e.road ? -0.55 : short ? 1.1 : 0.75; // 道路側は内側、短い辺は外側に離して書く
                 const pa = toPx({ x: a.x + n.x * off, y: a.y + n.y * off });
                 const pb = toPx({ x: b.x + n.x * off, y: b.y + n.y * off });
                 const mid = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
                 let ang = (Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180) / Math.PI;
                 if (ang > 90 || ang < -90) ang += 180;
-                const short = len < 1.0;
                 return (
                   <g key={"dim" + i}>
                     {!e.road && !short && (
@@ -418,7 +356,7 @@ export default function SitePlan({ project, setProject }: Props) {
                     )}
                     <text
                       x={mid.x}
-                      y={mid.y - (short ? 0 : 6)}
+                      y={mid.y + (short ? 4 : -6)}
                       textAnchor="middle"
                       fontSize={short ? 12 : 15}
                       fontWeight={600}
@@ -430,7 +368,7 @@ export default function SitePlan({ project, setProject }: Props) {
                     {e.note && (
                       <g>
                         <circle cx={toPx(a).x} cy={toPx(a).y} r={5} fill="#111" />
-                        <text x={toPx(a).x - 10} y={toPx(a).y - 10} textAnchor="end" fontSize={11} fill="#333">
+                        <text x={toPx(a).x - 16} y={toPx(a).y - 24} textAnchor="end" fontSize={11} fill="#333">
                           {e.note}
                         </text>
                       </g>
@@ -447,37 +385,6 @@ export default function SitePlan({ project, setProject }: Props) {
               <text x={cen.x} y={cen.y + 34} textAnchor="middle" fontSize={22} fill="#1b2430">
                 ({round(area / TSUBO_M2, 2).toFixed(2)}坪)
               </text>
-
-              {/* 建物 */}
-              {showBuilding && (
-                <g
-                  className="cursor-move"
-                  onPointerDown={(e) => {
-                    const p = clientToLocal(e);
-                    setDrag({ kind: "bld", dx: p.x - building.x, dy: p.y - building.y });
-                    (e.target as Element).setPointerCapture?.(e.pointerId);
-                  }}
-                >
-                  <polygon
-                    points={corners.map((p) => `${p.x},${p.y}`).join(" ")}
-                    fill={clearance.violations.length ? "rgba(220,60,60,0.18)" : "rgba(47,111,237,0.16)"}
-                    stroke={clearance.violations.length ? "#c0392b" : "#2f6fed"}
-                    strokeWidth={2}
-                  />
-                  <text x={(corners[0].x + corners[1].x) / 2} y={Math.max(corners[0].y, corners[1].y) - 10} textAnchor="middle" fontSize={12} fill="#2458c4">
-                    建物 {building.w}×{building.d}m
-                  </text>
-                  {/* 隅から境界までの距離 */}
-                  {clearance.results.map((r, k) => {
-                    const c = corners[k];
-                    return (
-                      <text key={k} x={c.x} y={c.y - 4} fontSize={10} fill={r.min < clearance.required ? "#c0392b" : "#2458c4"} textAnchor="middle">
-                        {round(r.min, 2)}m
-                      </text>
-                    );
-                  })}
-                </g>
-              )}
 
               {/* 境界点（ドラッグ可） */}
               {polyPx.map((p, i) => (
@@ -501,7 +408,7 @@ export default function SitePlan({ project, setProject }: Props) {
             {/* 方位（回転しない位置に置き、矢印だけ回す） */}
             <g transform={`translate(${W - 50} 50)`}>
               <circle r={22} fill="#fff" stroke="#333" strokeWidth={1} />
-              <g transform={`rotate(${-site.northDeg})`}>
+              <g>
                 <polygon points="0,-18 7,6 0,2 -7,6" fill="#111" />
                 <polygon points="0,-18 7,6 0,2" fill="#fff" stroke="#111" strokeWidth={0.5} />
               </g>
