@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import type { Project, HeightRules } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
 import { KODO_PRESETS, ZONE_PRESETS, ZONE_SOURCE } from "@/lib/heightPresets";
-import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits, levels, northFaceOf, FACE_BASE, roadInfos, roadLevelOffset } from "@/lib/heightLimits";
+import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits3D, levels, roadInfos, roadLevelOffset } from "@/lib/heightLimits";
 import { checkSkyFactor, type SkyResult } from "@/lib/skyFactor";
 import { polygonArea, round } from "@/lib/geometry";
 
@@ -22,7 +22,8 @@ export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
   const r = rulesOf(project);
   const b = project.building;
   const lv = levels(b);
-  const lims = checkLimits(project);
+  const lims = checkLimits3D(project);
+  const wp = (l: { worst: { x: number; y: number; z: number; limit: number } | null }) => (l.worst ? `（最も厳しい点: 建物座標 x${round(l.worst.x, 2)} y${round(l.worst.y, 2)}、高さ ${mm(l.worst.z)} vs 上限 ${mm(l.worst.limit)}）` : "");
   const rows: Row[] = [];
   const mm = (m: number) => Math.round(m * 1000).toLocaleString();
   const zone = ZONE_PRESETS.find((z) => z.id === r.zoneId);
@@ -58,7 +59,7 @@ export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
       rows.push({ item: "道路斜線", status: "ng", detail: `最大 ${mm(roadOver)}mm 超え（天空率は未計算）` });
     }
   } else {
-    rows.push({ item: "道路斜線", status: "ok", detail: `最高高さ ${mm(lv.max)}mm は斜線の内側${roads.length > 1 ? `（${roads.length} 方向道路、令132条で幅員をみなし）` : ""}${roadLevelOffset(project) !== 0 ? `、高低差 ${project.site.roadLevelDiff}m を考慮` : ""}` });
+    rows.push({ item: "道路斜線", status: "ok", detail: `屋根面・軒先の全点が斜線の内側${roads.length > 1 ? `（${roads.length} 方向道路、令132条で幅員をみなし）` : ""}${roadLevelOffset(project) !== 0 ? `、高低差 ${project.site.roadLevelDiff}m を考慮` : ""}` });
   }
   if (!r.skyEnabled) rows.push({ item: "天空率（道路）", status: "na", detail: "未使用" });
   else if (!skyAll) rows.push({ item: "天空率（道路）", status: "unknown", detail: "未計算" });
@@ -67,19 +68,19 @@ export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
     rows.push({ item: `天空率（${x.road}）`, status: "error" in res ? "unknown" : res.ok ? "ok" : "ng", detail: "error" in res ? res.error : `算定位置 ${res.points.length} 点（間隔 ${round(res.info.pitch, 2)}m）、最小余裕 ${round(res.worst * 100, 2)} ポイント。${res.info.note.join("。")}` });
   }
 
-  const nb = lims.filter((l) => l.key.startsWith("nb"));
+  const nb = lims.find((l) => l.key === "neighbor");
   if (!r.neighborEnabled) rows.push({ item: "隣地斜線", status: "na", detail: "対象外（低層住専）または未使用" });
-  else rows.push({ item: "隣地斜線", status: nb.some((l) => l.over > 0) ? "ng" : "ok", detail: nb.some((l) => l.over > 0) ? nb.filter((l) => l.over > 0).map((l) => `${l.name} ${mm(l.over)}mm 超え`).join("、") : `${r.neighborBase}m＋${r.neighborSlope}×距離 の内側` });
+  else rows.push({ item: "隣地斜線", status: nb && nb.over > 0 ? "ng" : "ok", detail: nb && nb.over > 0 ? `最大 ${mm(nb.over)}mm 超え${wp(nb)}` : `${r.neighborBase}m＋${r.neighborSlope}×距離 の内側` });
 
   const north = lims.find((l) => l.key === "north");
   if (!r.northEnabled) rows.push({ item: "北側斜線", status: "na", detail: "対象外（低層・中高層住専以外）" });
-  else rows.push({ item: "北側斜線", status: north && north.over > 0 ? "ng" : "ok", detail: north && north.over > 0 ? `最大 ${mm(north.over)}mm 超え（北側の面＝${FACE_BASE[northFaceOf(project)]}）` : `${r.northBase}m＋${r.northSlope}×距離 の内側` });
+  else rows.push({ item: "北側斜線", status: north && north.over > 0 ? "ng" : "ok", detail: north && north.over > 0 ? `最大 ${mm(north.over)}mm 超え${wp(north)}` : `${r.northBase}m＋${r.northSlope}×真北距離 の内側${north?.worst ? `（余裕 最小 ${mm(north.worst.limit - north.worst.z)}mm）` : ""}` });
 
   const kodo = lims.find((l) => l.key === "kodo");
   const kp = KODO_PRESETS.find((k) => k.id === r.kodoPresetId);
   if (!r.kodoEnabled) rows.push({ item: "高度地区", status: "unknown", detail: "未設定。指定の有無を都市計画図で確認してください" });
   else if (!r.kodoSegs.length && !r.kodoAbsolute) rows.push({ item: "高度地区", status: "unknown", detail: `${kp?.name ?? "手入力"}: 数値が入っていません` });
-  else rows.push({ item: "高度地区", status: (kodo && kodo.over > 0) || (r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute) ? "ng" : kp && !kp.verified ? "unknown" : "ok", detail: `${kp?.name ?? "手入力"}${kp && !kp.verified ? "【要確認: 数値は検索要約からの転記】" : ""}${kodo && kodo.over > 0 ? ` 斜線を最大 ${mm(kodo.over)}mm 超え` : ""}${r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute ? ` 絶対高さ ${r.kodoAbsolute}m を超え` : ""}` });
+  else rows.push({ item: "高度地区", status: (kodo && kodo.over > 0) || (r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute) ? "ng" : kp && !kp.verified ? "unknown" : "ok", detail: `${kp?.name ?? "手入力"}${kp && !kp.verified ? "【要確認: 数値は検索要約からの転記】" : ""}${kodo && kodo.over > 0 ? ` 斜線を最大 ${mm(kodo.over)}mm 超え${wp(kodo)}` : kodo?.worst ? ` 斜線の余裕 最小 ${mm(kodo.worst.limit - kodo.worst.z)}mm（軒先・屋根面の全点で判定）` : ""}${r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute ? ` 絶対高さ ${r.kodoAbsolute}m を超え` : ""}` });
 
   const abs = lims.find((l) => l.key === "abs");
   if (r.absoluteMax > 0) rows.push({ item: "絶対高さ（法55条）", status: abs && abs.over > 0 ? "ng" : "ok", detail: `${r.absoluteMax}m（最高高さ ${mm(lv.max)}mm）` });

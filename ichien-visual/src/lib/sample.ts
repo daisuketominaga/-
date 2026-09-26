@@ -168,3 +168,83 @@ export function emptyProject(): Project {
   e.building = buildingFromGrid(e.site, e.grid, e.building.w, e.building.d, e.building);
   return e;
 }
+
+
+/**
+ * 教材1: 横浜市保土ケ谷区法泉3丁目（建売・イーカム設計）。
+ * 出典: 地積測量図（令和7年1月4日、任意座標系、地積124.32㎡）と 建築概要・配置図／立面図（図面番号14192001）。
+ * 敷地座標は配置図の「座標面積計算表」（01〜012、x=右、y=上）をそのまま使用。敷地面積 123.59㎡。
+ * 真北は配置図の記載 8.69°（図の上から左回り＝反時計回りと判断【要確認】）。
+ * 建物: 2階建て 5.46×8.645、切妻6寸、軒の出250、北側に母屋下がり910。最高高さ 7.798、最高軒高 6.040、1FL +581。
+ * 設計事務所の判定: 建ぺい率 39.20%（≦50）、容積率 73.09%（≦100）、第一種高度斜線 クリア 0.070／0.252。
+ */
+export function lessonProject1(): Project {
+  const raw: [number, number][] = [
+    [0.0, 0.0], [7.716, -0.244], [7.522, -8.132], [19.101, -8.17], [19.073, -10.19], [13.925, -10.168],
+    [13.925, -10.16], [7.381, -10.133], [7.38, -10.216], [6.201, -10.713], [3.997, -15.418], [0.0, -13.557],
+  ];
+  const points = raw.map(([x, y]) => ({ x, y: y + 15.418 }));
+  const lens = [7.71, 7.89, 11.57, 2.01, 5.14, 0.008, 6.54, 0.08, 1.27, 5.19, 4.4, 13.55];
+  const base = sampleProject();
+  const p: Project = {
+    ...base,
+    name: "教材1 保土ケ谷区法泉3丁目",
+    address: "神奈川県横浜市保土ケ谷区法泉三丁目211番228の一部",
+    catchCopy: "",
+    site: {
+      points,
+      edges: lens.map((l, i) => (i === 3 ? { index: i, length: l, road: true, roadWidth: 4.89, roadLabel: "法42条1項1号 市道今井第382号線" } : { index: i, length: l })),
+      northDeg: 351.31,
+      areaOverride: 123.59,
+      coverageRatio: 50,
+      farRatio: 100,
+      setback: 0.5,
+      fireproofException: false,
+      roadLevelDiff: 3.9,
+      cornerLot: false,
+      heightRules: {
+        zoneId: "1low",
+        roadSlope: 1.25,
+        roadApplyDist: 20,
+        northEnabled: true,
+        northBase: 5,
+        northSlope: 1.25,
+        neighborEnabled: false,
+        neighborBase: 20,
+        neighborSlope: 1.25,
+        kodoEnabled: true,
+        kodoPresetId: "yokohama-1",
+        kodoSegs: [{ from: 0, upTo: null, base: 5, slope: 0.6 }],
+        kodoAbsolute: 10,
+        absoluteMax: 10,
+        skyEnabled: true,
+      },
+    },
+    grid: { baseEdge: 0, u: 1.25, v: 1.02 },
+    building: {
+      ...base.building,
+      w: 5.46,
+      d: 8.645,
+      floors: 2,
+      floorHeights: [2.4, 2.409],
+      foundation: 0.481,
+      roof: "gable",
+      roofHighSide: "N",
+      roofPitchSun: 6,
+      eaveOverhang: 0.25,
+      // 底辺（01→02＝敷地の北辺）を基準にしたので、建物座標の y=0 側が北。母屋下がりは局所座標の S 面
+      roofDrop: { S: 0.91 },
+      structureLabel: "木造2階建て",
+      wallLabel: "軽量モルタル t=15 リシン吹付け",
+      accentLabel: "彩色無石綿スレート葺き屋根",
+    },
+    floors: [
+      { level: 1, rooms: [{ id: "L1", name: "1階（面積合わせ 46.02㎡）", type: "other", x: 0, y: 0, w: 5.46, d: 8.428 }], fixtures: [] },
+      { level: 2, rooms: [{ id: "L2", name: "2階（面積合わせ 44.30㎡）", type: "other", x: 0, y: 0, w: 5.46, d: 8.114 }], fixtures: [] },
+    ],
+    openings: [],
+    updatedAt: new Date().toISOString(),
+  };
+  p.building = buildingFromGrid(p.site, p.grid, p.building.w, p.building.d, p.building);
+  return p;
+}

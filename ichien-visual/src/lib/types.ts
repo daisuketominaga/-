@@ -109,6 +109,10 @@ export type Building = {
   roofHighSide: "N" | "S" | "E" | "W";
   /** 屋根勾配（寸） */
   roofPitchSun: number;
+  /** 軒の出 m（外壁面から軒先まで。斜線は軒先で判定するので重要。未設定は 0） */
+  eaveOverhang?: number;
+  /** 母屋下がり m: 面ごとに、外壁からこの長さ内側の線から屋根勾配で下げる（北側斜線をかわす常套手段） */
+  roofDrop?: Partial<Record<"N" | "S" | "E" | "W", number>>;
   wallColor: string;
   accentColor: string;
   wallLabel: string;

@@ -21,19 +21,16 @@ export type FixtureSpec = {
   guessed?: boolean;
 };
 
+/**
+ * サッシの呼称。実物の図面（法泉3丁目の1階平面図）の記号 HS16020・HS11911・YK16503・F07403・T02611 などから、
+ * 呼称 = 幅3桁（(外形幅−40)/10）＋高さ2桁（(外形高−70)/100 を四捨五入）で付いていることを確認した。
+ * 例: 1690×1170 → 16511、1690×2030 → 16520、1235×1170 → 11911、780×370 → 07403
+ */
 const sashName = (w: number, h: number) => {
-  // サッシの呼称: 幅1690×高さ1170 → 16511、幅1690×高さ2030 → 16520 のように、幅3桁＋高さ2桁で呼ぶ慣例
-  const table: Record<string, string> = {
-    "1690x1170": "16511",
-    "1690x2030": "16520",
-    "1235x1170": "11911",
-    "2550x2030": "25120",
-    "640x770": "06007",
-    "640x1170": "06011",
-    "405x770": "04007",
-    "780x770": "07407",
-  };
-  return table[`${w}x${h}`] ?? `${w}×${h}（呼称は要確認）`;
+  const ww = Math.round((w - 40) / 10);
+  const hh = Math.round((h - 70) / 100);
+  if (ww <= 0 || hh <= 0) return `${w}×${h}`;
+  return `${String(ww).padStart(3, "0")}${String(hh).padStart(2, "0")}`;
 };
 
 export const FIXTURE_SPECS: Record<FixtureKind, FixtureSpec> = {

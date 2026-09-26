@@ -5,7 +5,7 @@
 import type { Project, Face, HeightRules, Building } from "./types";
 import { DEFAULT_HEIGHT_RULES } from "./types";
 import { clearances } from "./grid";
-import { faceLength, faceNormalWorld, roofRise, facePointWorld, buildingCorners } from "./geometry";
+import { faceLength, faceNormalWorld, roofRise, facePointWorld, buildingCorners, roofHeightAt, distToSegment } from "./geometry";
 import { baseFrame, toLocal } from "./grid";
 import { KODO_PRESETS, ZONE_PRESETS } from "./heightPresets";
 
@@ -24,7 +24,8 @@ export function levels(b: Building) {
   }
   const eave = h + 0.25;
   const rise = roofRise(b);
-  return { fl, eave, max: eave + rise + (b.roof === "flat" ? 0.15 : 0.16) };
+  // 最高高さ = 軒高 + 屋根の立ち上がり + 軒先の垂木・仕上げ分（実物の図面では 0.12）
+  return { fl, eave, max: eave + rise + (b.roof === "flat" ? 0.15 : 0.12) };
 }
 
 export function rulesOf(project: Project): HeightRules {
@@ -235,4 +236,97 @@ export function checkLimits(project: Project): LimitCheck[] {
     }
   }
   return Array.from(byKey.values());
+}
+
+
+export type Limit3D = { key: string; name: string; over: number; worst: { x: number; y: number; z: number; limit: number } | null; note: string };
+
+/** 半直線 o + s·dir と線分 a-b の交点までの距離 */
+function rayHit(o: { x: number; y: number }, dir: { x: number; y: number }, a: { x: number; y: number }, c: { x: number; y: number }): number | null {
+  const ex = c.x - a.x, ey = c.y - a.y;
+  const det = dir.x * ey - dir.y * ex;
+  if (Math.abs(det) < 1e-9) return null;
+  const dx = a.x - o.x, dy = a.y - o.y;
+  const sPar = (dx * ey - dy * ex) / det;
+  const t = (dx * dir.y - dy * dir.x) / det;
+  if (sPar <= 1e-9 || t < -1e-9 || t > 1 + 1e-9) return null;
+  return sPar;
+}
+
+/**
+ * 屋根の3次元形状（軒の出を含む）で各制限を判定する。設計事務所の検討と同じく、
+ * 屋根面・軒先の各点について「その点の高さ ≤ その点での制限高さ」を確かめる。
+ * 北側の斜線は各点から真北方向に境界線までの水平距離（北側が道路なら道路の反対側まで）で計算。
+ */
+export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
+  const { site, building: b, grid } = project;
+  const r = rulesOf(project);
+  const lv = levels(b);
+  const rise = roofRise(b);
+  const e = Math.max(0, b.eaveOverhang ?? 0);
+  const rad = (b.rotDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const toWorld = (x: number, y: number) => ({ x: b.x + x * cos - y * sin, y: b.y + x * sin + y * cos });
+  const roads = roadInfos(project);
+  const roadFrames = roads.map((rd) => ({ rd, f: baseFrame(site, rd.edgeIndex) }));
+  const zOff = roadLevelOffset(project);
+  const nd = (site.northDeg * Math.PI) / 180;
+  const north = { x: Math.sin(nd), y: Math.cos(nd) };
+  const n = site.points.length;
+  const roadIdx = new Set(site.edges.filter((x) => x.road).map((x) => x.index));
+  const roadWidthOf = (i: number) => site.edges.find((x) => x.index === i)?.roadWidth ?? 4;
+  const northDist = (P: { x: number; y: number }): number | null => {
+    let best: { s: number; i: number } | null = null;
+    for (let i = 0; i < n; i++) {
+      const sHit = rayHit(P, north, site.points[i], site.points[(i + 1) % n]);
+      if (sHit !== null && (!best || sHit < best.s)) best = { s: sHit, i };
+    }
+    if (!best) return null;
+    // 北側が道路なら、道路の反対側の境界線まで
+    return best.s + (roadIdx.has(best.i) ? roadWidthOf(best.i) : 0);
+  };
+  const neighborDist = (P: { x: number; y: number }): number => {
+    let min = Infinity;
+    for (let i = 0; i < n; i++) if (!roadIdx.has(i)) min = Math.min(min, distToSegment(P, site.points[i], site.points[(i + 1) % n]));
+    return min;
+  };
+  type Acc = { key: string; name: string; over: number; worst: Limit3D["worst"]; note: string };
+  const acc = new Map<string, Acc>();
+  const put = (key: string, name: string, note: string, z: number, limit: number | null, x: number, y: number) => {
+    const a = acc.get(key) ?? { key, name, over: 0, worst: null, note };
+    if (limit !== null) {
+      const over = z - limit;
+      if (over > a.over) { a.over = over; a.worst = { x, y, z, limit }; }
+      if (!a.worst) a.worst = { x, y, z, limit };
+    }
+    acc.set(key, a);
+  };
+  const kodoAbs = r.kodoEnabled ? r.kodoAbsolute : 0;
+  for (let x = -e; x <= b.w + e + 1e-9; x += step) {
+    for (let y = -e; y <= b.d + e + 1e-9; y += step) {
+      const inside = x >= -1e-9 && x <= b.w + 1e-9 && y >= -1e-9 && y <= b.d + 1e-9;
+      // 軒の出の範囲: 外壁から e 以内（角は矩形で近似）
+      if (!inside && (x < -e || x > b.w + e || y < -e || y > b.d + e)) continue;
+      const z = roofHeightAt(b, x, y, lv.eave, rise, lv.max);
+      const P = toWorld(x, y);
+      for (const { rd, f } of roadFrames) {
+        const v = Math.max(0, toLocal(f, P).y);
+        const D = rd.effWidth + rd.back + v;
+        const lim = D > r.roadApplyDist ? null : r.roadSlope * D + zOff;
+        put(roads.length > 1 ? `road${rd.edgeIndex}` : "road", roads.length > 1 ? `道路斜線(${rd.label})` : "道路斜線", `勾配 ${r.roadSlope}`, z, lim, x, y);
+      }
+      if (r.northEnabled || (r.kodoEnabled && r.kodoSegs.length)) {
+        const L = northDist(P);
+        if (r.northEnabled) put("north", "北側斜線", `${r.northBase}m＋${r.northSlope}×L`, z, L === null ? null : r.northBase + r.northSlope * L, x, y);
+        if (r.kodoEnabled && r.kodoSegs.length) put("kodo", "高度地区", "北側の区間式", z, L === null ? null : evalSegs(r.kodoSegs, L), x, y);
+      }
+      if (r.neighborEnabled) {
+        const d = neighborDist(P);
+        put("neighbor", "隣地斜線", `${r.neighborBase}m＋${r.neighborSlope}×距離`, z, Number.isFinite(d) ? r.neighborBase + r.neighborSlope * d : null, x, y);
+      }
+      const abs = Math.min(...[r.absoluteMax, kodoAbs].filter((v) => v > 0));
+      if (Number.isFinite(abs)) put("abs", "絶対高さ", `${abs}m`, z, abs, x, y);
+    }
+  }
+  return Array.from(acc.values());
 }

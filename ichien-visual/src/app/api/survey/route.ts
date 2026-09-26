@@ -14,6 +14,7 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
 - 辺の長さは座標から √((X差)²+(Y差)²) で計算する。図に書かれた辺長がぼやけていても、座標から確定できる。
 - 出力の x には Y（東西）、y には X（南北）を入れる（全体を平行移動して 0 以上にする）。
 - 求積表の各点について、読み取った座標を "coords" に {label, X, Y} の配列で必ず返す。
+- 図に「使用した座標系」があれば "coordSystem" に書き写す（例: "平面直角座標系 第IX系" / "任意座標系"）。任意座標系のときは座標の向きが真北と一致しないので、必ず "coordSystem" に "任意座標系" と返し、方位記号の傾きがあれば "northHint" に「北矢印が上から時計回りに約○度傾いている」のように書く。
 
 座標系:
 - 単位はメートル。x は東が正、y は北が正。
@@ -32,6 +33,8 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
   ],
   "areaOverride": 79.43,
   "coords": [{"label":"K1","X":109.234,"Y":103.087}, ...],
+  "coordSystem": "任意座標系" または "平面直角座標系",
+  "northHint": "方位記号の見え方（任意座標系のときだけ）",
   "notes": "読み取りで自信のない箇所を一言。求積表から計算した場合はその旨"
 }
 edges[i].index は points[i] から points[i+1] への辺。道路に接する辺は road:true。
@@ -77,7 +80,9 @@ export async function POST(req: NextRequest) {
       northDeg: 0,
       areaOverride: typeof json.areaOverride === "number" ? json.areaOverride : undefined,
     };
-    return NextResponse.json({ site, coords: json.coords ?? null, notes: json.notes, usage: msg.usage });
+    const coordSystem = typeof json.coordSystem === "string" ? json.coordSystem : null;
+    const notes = [json.notes, coordSystem && coordSystem.includes("任意") ? `【注意】任意座標系のため、座標の上＝北ではありません。敷地図の「方位」で測量図の方位記号に合わせて向きを設定してください。${json.northHint ? "（" + json.northHint + "）" : ""}` : null].filter(Boolean).join(" ");
+    return NextResponse.json({ site, coords: json.coords ?? null, coordSystem, notes, usage: msg.usage });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

@@ -160,10 +160,10 @@ export function buildingHeight(b: Building) {
 /** 片流れ屋根の高低差 m（勾配 寸 = 10あたりの立ち上がり） */
 export function roofRise(b: Building) {
   if (b.roof === "flat") return 0;
-  const run =
-    b.roofHighSide === "N" || b.roofHighSide === "S" ? b.d : b.w;
-  const rise = (run * b.roofPitchSun) / 10;
-  return b.roof === "gable" ? rise / 2 : rise;
+  const alongY = b.roofHighSide === "N" || b.roofHighSide === "S";
+  // 片流れ: 高い側へ向かう長さ。切妻: 棟と直交する向きの半分
+  const run = b.roof === "gable" ? (alongY ? b.w : b.d) / 2 : alongY ? b.d : b.w;
+  return (run * b.roofPitchSun) / 10;
 }
 
 export const m2ToTsubo = (m2: number) => m2 / 3.30578;
@@ -228,9 +228,9 @@ export function roadFaceOf(site: Site, b: Building): Face | null {
  */
 export function northScreenDeg(project: Pick<Project, "site" | "building" | "grid">, view: "site" | "plan"): number {
   const base = project.site.northDeg;
-  if (view === "site") return ((base % 360) + 360) % 360;
-  const deg = base + project.building.rotDeg + (project.grid?.flip ? 180 : 0);
-  return ((deg % 360) + 360) % 360;
+  const norm = (v: number) => Math.round((((v % 360) + 360) % 360) * 100) / 100;
+  if (view === "site") return norm(base);
+  return norm(base + project.building.rotDeg + (project.grid?.flip ? 180 : 0));
 }
 
 
@@ -240,4 +240,41 @@ export function facePointWorld(b: Building, face: Face, m: number): Pt {
   const r = (b.rotDeg * Math.PI) / 180;
   const cos = Math.cos(r), sin = Math.sin(r);
   return { x: b.x + local.x * cos - local.y * sin, y: b.y + local.x * sin + local.y * cos };
+}
+
+
+/**
+ * 屋根面の高さ（GL基準 m）。建物座標 (x, y) は外壁の外側（軒の出の範囲）でもよい。
+ * eave = 軒高（外壁面での屋根下端）、rise = 屋根の高低差。
+ * 片流れ: 高い側へ向かって直線に上がる。切妻: 棟で最高、両側へ下がる。陸屋根: 一定。
+ * 外壁の外側では、勾配のある向きは同じ勾配で下がり続け、けらば側は外壁面と同じ高さ。
+ */
+export function roofHeightAt(b: Building, x: number, y: number, eave: number, rise: number, maxHeight: number): number {
+  if (b.roof === "flat") return maxHeight;
+  const pitch = b.roofPitchSun / 10;
+  let z = roofBase(b, x, y, eave, rise, pitch);
+  // 母屋下がり: 面ごとに、外壁から drop 内側の線から同じ勾配で下がる面との低い方
+  const d = b.roofDrop ?? {};
+  const planes: number[] = [];
+  if (d.N) planes.push(eave - pitch * (y - (b.d - d.N)));
+  if (d.S) planes.push(eave - pitch * (d.S - y));
+  if (d.E) planes.push(eave - pitch * (x - (b.w - d.E)));
+  if (d.W) planes.push(eave - pitch * (d.W - x));
+  for (const pz of planes) z = Math.min(z, pz);
+  return z;
+}
+
+function roofBase(b: Building, x: number, y: number, eave: number, rise: number, pitch: number): number {
+  if (b.roof === "shed") {
+    // 高い側の面に向かう座標 s（0 = 低い側の外壁、run = 高い側の外壁）
+    const alongY = b.roofHighSide === "N" || b.roofHighSide === "S";
+    const run = alongY ? b.d : b.w;
+    const s = b.roofHighSide === "N" ? y : b.roofHighSide === "S" ? b.d - y : b.roofHighSide === "E" ? x : b.w - x;
+    // 低い側の外側（s<0）は勾配で下がる。高い側の外側（s>run）は水平（けらば扱い）
+    return eave + pitch * Math.min(s, run);
+  }
+  // 切妻: 棟が N/S なら棟は南北方向（x = w/2）で東西へ下がる。E/W なら棟は東西方向（y = d/2）
+  const ridgeNS = b.roofHighSide === "N" || b.roofHighSide === "S";
+  const dist = ridgeNS ? Math.abs(x - b.w / 2) : Math.abs(y - b.d / 2);
+  return eave + rise - pitch * dist;
 }

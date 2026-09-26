@@ -67,6 +67,7 @@ export default function Elevation({ project, setProject }: Props) {
             {b.roof !== "flat" && (
               <>
                 <Num label="勾配（寸）" v={b.roofPitchSun} step={0.5} onChange={(v) => setB({ roofPitchSun: v })} />
+                <Num label="軒の出 m（斜線は軒先で判定）" v={b.eaveOverhang ?? 0} step={0.05} onChange={(v) => setB({ eaveOverhang: v })} />
                 <div>
                   <span className="label">{b.roof === "shed" ? "高い側（軒ゼロ側の反対）" : "棟の向き"}</span>
                   <select className="field" value={b.roofHighSide} onChange={(e) => setB({ roofHighSide: e.target.value as Building["roofHighSide"] })}>
