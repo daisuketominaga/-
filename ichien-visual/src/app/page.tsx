@@ -82,6 +82,7 @@ export default function Home() {
             <button className="btn-ghost" onClick={() => createProject("sample")} title="サンプル（藤沢市鵠沼松が岡）を追加">サンプル</button>
             <button className="btn-ghost" onClick={() => createProject("lesson1")} title="教材1（保土ケ谷区法泉3丁目・設計図あり）を追加">教材1</button>
             <button className="btn-ghost" onClick={() => createProject("lesson2")} title="教材2（戸塚区深谷町・設計図あり・測量図なし）を追加">教材2</button>
+            <button className="btn-ghost" onClick={() => createProject("lesson3")} title="教材3（架空・3階建て・天空率と日影の検証用）を追加">教材3</button>
             <button
               className="btn-ghost text-red-600"
               disabled={list.length <= 1}

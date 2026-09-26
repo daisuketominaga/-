@@ -2,9 +2,9 @@
 
 import { useRef, useState } from "react";
 import type { Project, Face, Opening, Building } from "@/lib/types";
-import { heightLimits, levels } from "@/lib/heightLimits";
+import { heightLimits, levels, elevationSilhouette } from "@/lib/heightLimits";
 import HeightCheck from "./HeightCheck";
-import { faceLength, roofRise, round, faceCompass, roadFaceOf } from "@/lib/geometry";
+import { faceLength, roofRise, round, faceCompass, roadFaceOf, notchesOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { derivedOpenings } from "@/lib/openings";
 
@@ -19,7 +19,7 @@ const FACE_BASE: Record<Face, string> = { S: "底辺側", N: "奥側", W: "左�
 const SIDES_FACE: Record<Face, [Face, Face]> = { N: ["E", "W"], S: ["W", "E"], E: ["S", "N"], W: ["N", "S"] };
 export function elevationTitle(project: Project) {
   const b = project.building;
-  return `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸（${FACE_BASE[b.roofHighSide]}が高い）` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
+  return `${project.name}　${b.structureLabel}　立面図　${b.wallLabel.split("（")[0]} × ${b.accentLabel.split("の")[0]}　基礎${Math.round(b.foundation * 1000)}・天井高${b.floorHeights.slice(0, b.floors).map((h) => Math.round(h * 1000).toLocaleString()).join("/")}・${b.roof === "shed" ? `片流れ${b.roofPitchSun}寸（${FACE_BASE[b.roofHighSide]}が高い）` : b.roof === "gable" ? `切妻${b.roofPitchSun}寸` : b.roof === "hip" ? `寄棟${b.roofPitchSun}寸` : "陸屋根"}　※概略図`;
 }
 function faceTitle(project: Project, face: Face) {
   return `${FACE_BASE[face]}立面図（${faceCompass(project.building, face, project.site.northDeg)}）`;
@@ -62,14 +62,18 @@ export default function Elevation({ project, setProject }: Props) {
                 <option value="shed">片流れ</option>
                 <option value="flat">陸屋根（フラット）</option>
                 <option value="gable">切妻</option>
+                <option value="hip">寄棟</option>
               </select>
             </div>
             {b.roof !== "flat" && (
               <>
                 <Num label="勾配（寸）" v={b.roofPitchSun} step={0.5} onChange={(v) => setB({ roofPitchSun: v })} />
                 <Num label="軒の出 m（斜線は軒先で判定）" v={b.eaveOverhang ?? 0} step={0.05} onChange={(v) => setB({ eaveOverhang: v })} />
+                {(["N", "S", "W", "E"] as Face[]).map((f) => (
+                  <Num key={f} label={`母屋下がり ${FACE_BASE[f]} m`} v={b.roofDrop?.[f] ?? 0} step={0.455} onChange={(v) => setB({ roofDrop: { ...(b.roofDrop ?? {}), [f]: Math.max(0, v) } })} />
+                ))}
                 <div>
-                  <span className="label">{b.roof === "shed" ? "高い側（軒ゼロ側の反対）" : "棟の向き"}</span>
+                  <span className="label">{b.roof === "shed" ? "高い側（軒ゼロ側の反対）" : b.roof === "hip" ? "棟の向き（寄棟は長辺で自動）" : "棟の向き"}</span>
                   <select className="field" value={b.roofHighSide} onChange={(e) => setB({ roofHighSide: e.target.value as Building["roofHighSide"] })}>
                     {(["S", "N", "W", "E"] as Face[]).map((f) => (
                       <option key={f} value={f}>{FACE_BASE[f]}（{faceCompass(b, f, site.northDeg)}）</option>
@@ -203,7 +207,6 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
     const b = project.building;
     const lv = levels(b);
     const len = faceLength(b, face);
-    const rise = roofRise(b);
     const W = len * px + 200;
     const H = lv.max * px + 70;
     const ox = 60;
@@ -211,36 +214,23 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
     const X = (m: number) => ox + m * px;
     const Y = (m: number) => gl - m * px;
 
-    // 屋根の形（この面から見た輪郭）
-    // 片流れ: 高い側が左右どちらか or 手前/奥（水平線）
+    // 屋根の形（この面から見た輪郭）: 寄棟・母屋下がり・切り欠きも含めて奥行方向の最大高さを走査
     const [leftF, rightF] = SIDES_FACE[face];
     const leftSide = faceCompass(b, leftF, project.site.northDeg);
     const rightSide = faceCompass(b, rightF, project.site.northDeg);
-    let roofPath = "";
-    let leftTop = lv.eave;
-    let rightTop = lv.eave;
-    if (b.roof === "shed") {
-      if (b.roofHighSide === leftF) leftTop = lv.eave + rise;
-      else if (b.roofHighSide === rightF) rightTop = lv.eave + rise;
-      else if (b.roofHighSide === face) {
-        leftTop = rightTop = lv.eave + rise;
-      }
-      roofPath = `M ${X(0)} ${Y(leftTop)} L ${X(len)} ${Y(rightTop)}`;
-    } else if (b.roof === "gable") {
-      const ridgeAlong = b.roofHighSide === "N" || b.roofHighSide === "S" ? "NS" : "EW";
-      const seesGable = (ridgeAlong === "NS" && (face === "N" || face === "S")) || (ridgeAlong === "EW" && (face === "E" || face === "W"));
-      if (seesGable) roofPath = `M ${X(0)} ${Y(lv.eave)} L ${X(len / 2)} ${Y(lv.eave + rise)} L ${X(len)} ${Y(lv.eave)}`;
-      else {
-        leftTop = rightTop = lv.eave + rise;
-        roofPath = `M ${X(0)} ${Y(leftTop)} L ${X(len)} ${Y(rightTop)}`;
-      }
-    } else {
-      leftTop = rightTop = lv.eave + 0.15;
-      roofPath = `M ${X(0)} ${Y(leftTop)} L ${X(len)} ${Y(rightTop)}`;
-    }
-    const wallPoly = b.roof === "gable" && roofPath.includes("L") && roofPath.split("L").length === 3
-      ? `${X(0)},${Y(lv.eave)} ${X(len / 2)},${Y(lv.eave + rise)} ${X(len)},${Y(lv.eave)} ${X(len)},${Y(b.foundation)} ${X(0)},${Y(b.foundation)}`
-      : `${X(0)},${Y(leftTop)} ${X(len)},${Y(rightTop)} ${X(len)},${Y(b.foundation)} ${X(0)},${Y(b.foundation)}`;
+    const sil = elevationSilhouette(b, face);
+    const roofPath = "M " + sil.map((p) => `${X(p.m)} ${Y(p.z)}`).join(" L ");
+    const wallPoly = [...sil.map((p) => `${X(p.m)},${Y(p.z)}`), `${X(len)},${Y(b.foundation)}`, `${X(0)},${Y(b.foundation)}`].join(" ");
+    // この面から見える切り欠きの内壁の位置（左端からの m）
+    const notchLines: number[] = notchesOf(b).flatMap((n) => {
+      const side = n.corner[0] as "S" | "N", horiz = n.corner[1] as "W" | "E";
+      if (face === "S" && side === "S") return [horiz === "W" ? n.w : b.w - n.w];
+      if (face === "N" && side === "N") return [horiz === "W" ? b.w - n.w : n.w];
+      if (face === "W" && horiz === "W") return [side === "S" ? b.d - n.d : n.d];
+      if (face === "E" && horiz === "E") return [side === "S" ? n.d : b.d - n.d];
+      return [];
+    });
+    const silZ = (m: number) => { const i = Math.min(sil.length - 1, Math.max(0, Math.round((m / len) * (sil.length - 1)))); return sil[i].z; };
 
     const ops = [...derivedOpenings(project), ...project.openings].filter((o) => o.face === face);
     const marks: [string, number][] = [["GL ±0", 0], ...lv.fl.map((h, i) => [`${i + 1}FL +${Math.round(h * 1000).toLocaleString()}`, h] as [string, number]), ["軒高 +" + Math.round(lv.eave * 1000).toLocaleString(), lv.eave], ["最高高さ +" + Math.round(lv.max * 1000).toLocaleString(), lv.max]];
@@ -272,13 +262,8 @@ export const ElevationSvg = forwardRef<SVGSVGElement, { project: Project; face: 
         <rect x={X(0)} y={Y(b.foundation)} width={len * px} height={b.foundation * px} fill="#5f6670" stroke="#222" strokeWidth={1} />
         {/* 外壁 */}
         <polygon points={wallPoly} fill={`url(#siding-${face})`} stroke="#111" strokeWidth={1.5} />
-        {/* 奥へ上る片流れ: 屋根面が帯として見える */}
-        {b.roof === "shed" && b.roofHighSide !== face && b.roofHighSide !== leftF && b.roofHighSide !== rightF && (
-          <g>
-            <rect x={X(0)} y={Y(lv.eave + rise)} width={len * px} height={rise * px} fill="#3a3f47" stroke="#111" strokeWidth={1} />
-            <text x={X(len / 2)} y={Y(lv.eave + rise / 2) + 4} textAnchor="middle" fontSize={9} fill="#ddd">屋根面（奥へ上る片流れ）</text>
-          </g>
-        )}
+        {/* 切り欠きの内壁 */}
+        {notchLines.map((m, i) => <line key={"nl" + i} x1={X(m)} y1={Y(b.foundation)} x2={X(m)} y2={Y(silZ(m))} stroke="#111" strokeWidth={1} strokeDasharray="5 3" />)}
         {/* 屋根の笠木 */}
         <path d={roofPath} stroke="#111" strokeWidth={4} fill="none" />
         {/* 開口 */}

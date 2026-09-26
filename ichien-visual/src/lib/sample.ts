@@ -1,4 +1,5 @@
 import type { Project, Floor, Opening } from "./types";
+import { DEFAULT_HEIGHT_RULES } from "./types";
 import { buildingFromGrid } from "./grid";
 
 /** 参考画像（藤沢市鵠沼松が岡4丁目）に近い形のサンプル */
@@ -327,5 +328,40 @@ export function lessonProject2(): Project {
     updatedAt: new Date().toISOString(),
   };
   p.building = buildingFromGrid(p.site, p.grid, p.building.w, p.building.d, p.building);
+  return p;
+}
+
+
+/**
+ * 教材3（検証用・架空）: 教材2の敷地に木造3階建てを置き、道路斜線を天空率でかわす例。
+ * 実在の設計図ではなく、天空率・日影・L字形・寄棟の動作を確かめるための架空の計画。
+ * 準住居地域・道路 4.5m・日影 4m 測定面 4h/2.5h（教材2の都市計画図の「日影」欄と同じ）。
+ */
+export function lessonProject3(): Project {
+  const p = lessonProject2();
+  p.name = "教材3 検証用 3階建て（架空）";
+  p.catchCopy = "教材2の敷地で、道路斜線を天空率でかわす3階建て（架空の検証用）";
+  p.site.heightRules = { ...(p.site.heightRules ?? DEFAULT_HEIGHT_RULES), kodoEnabled: false, kodoPresetId: "", kodoSegs: [], kodoAbsolute: 0, shadowEnabled: true, shadowTarget: "h10", shadowPlaneH: 4, shadowHours5: 4, shadowHours10: 2.5, latitude: 35.45 };
+  p.grid = { baseEdge: 5, u: 0.62, v: 1.0 };
+  p.building = buildingFromGrid(p.site, p.grid, 8.19, 6.37, {
+    ...p.building,
+    w: 8.19,
+    d: 6.37,
+    floors: 3,
+    floorHeights: [2.4, 2.4, 2.4],
+    foundation: 0.5,
+    roof: "hip",
+    roofHighSide: "E",
+    roofPitchSun: 4,
+    eaveOverhang: 0.45,
+    roofDrop: {},
+    notches: [{ corner: "NW", w: 1.82, d: 1.82 }],
+    structureLabel: "木造3階建て（架空）",
+  });
+  p.floors = [
+    { level: 1, rooms: [{ id: "L1a", name: "1階", type: "other", x: 0, y: 0, w: 8.19, d: 4.55 }, { id: "L1b", name: "1階（奥）", type: "other", x: 1.82, y: 4.55, w: 6.37, d: 1.82 }], fixtures: [] },
+    { level: 2, rooms: [{ id: "L2a", name: "2階", type: "other", x: 0, y: 0, w: 8.19, d: 4.55 }, { id: "L2b", name: "2階（奥）", type: "other", x: 1.82, y: 4.55, w: 6.37, d: 1.82 }], fixtures: [] },
+    { level: 3, rooms: [{ id: "L3", name: "3階", type: "other", x: 0, y: 0, w: 8.19, d: 4.55 }], fixtures: [] },
+  ];
   return p;
 }

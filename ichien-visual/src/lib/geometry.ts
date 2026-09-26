@@ -1,4 +1,4 @@
-import type { Pt, Site, Building, Face, Project } from "./types";
+import type { Pt, Site, Building, Face, Project, Notch } from "./types";
 
 export const round = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 
@@ -161,6 +161,8 @@ export function buildingHeight(b: Building) {
 export function roofRise(b: Building) {
   if (b.roof === "flat") return 0;
   const alongY = b.roofHighSide === "N" || b.roofHighSide === "S";
+  // 寄棟: 短い方の半分で棟の高さが決まる
+  if (b.roof === "hip") return (Math.min(b.w, b.d) / 2 * b.roofPitchSun) / 10;
   // 片流れ: 高い側へ向かう長さ。切妻: 棟と直交する向きの半分
   const run = b.roof === "gable" ? (alongY ? b.w : b.d) / 2 : alongY ? b.d : b.w;
   return (run * b.roofPitchSun) / 10;
@@ -265,6 +267,11 @@ export function roofHeightAt(b: Building, x: number, y: number, eave: number, ri
 }
 
 function roofBase(b: Building, x: number, y: number, eave: number, rise: number, pitch: number): number {
+  if (b.roof === "hip") {
+    // 寄棟: 4 辺の軒からそれぞれ同じ勾配で上がる屋根面の低い方（外壁の外側は負の距離＝軒先へ下がる）
+    const dmin = Math.min(x, b.w - x, y, b.d - y);
+    return Math.min(eave + pitch * dmin, eave + rise);
+  }
   if (b.roof === "shed") {
     // 高い側の面に向かう座標 s（0 = 低い側の外壁、run = 高い側の外壁）
     const alongY = b.roofHighSide === "N" || b.roofHighSide === "S";
@@ -277,4 +284,149 @@ function roofBase(b: Building, x: number, y: number, eave: number, rise: number,
   const ridgeNS = b.roofHighSide === "N" || b.roofHighSide === "S";
   const dist = ridgeNS ? Math.abs(x - b.w / 2) : Math.abs(y - b.d / 2);
   return eave + rise - pitch * dist;
+}
+
+
+// ===== 建物外形（矩形＋角の切り欠き） =====
+
+/** 有効な切り欠きだけ（寸法が正で、矩形より小さいもの） */
+export function notchesOf(b: Building): Notch[] {
+  return (b.notches ?? []).filter((n) => n.w > 1e-6 && n.d > 1e-6 && n.w < b.w - 1e-6 && n.d < b.d - 1e-6);
+}
+
+/** 切り欠き矩形（建物座標）の範囲 */
+export function notchRect(b: Building, n: Notch) {
+  const x0 = n.corner === "SW" || n.corner === "NW" ? 0 : b.w - n.w;
+  const y0 = n.corner === "SW" || n.corner === "SE" ? 0 : b.d - n.d;
+  return { x0, y0, x1: x0 + n.w, y1: y0 + n.d };
+}
+
+/** 建物座標の点が外形（切り欠き後）の内側か。tol は外側への許容（軒の出など） */
+export function insideFootprint(b: Building, x: number, y: number, tol = 0): boolean {
+  if (x < -tol - 1e-9 || x > b.w + tol + 1e-9 || y < -tol - 1e-9 || y > b.d + tol + 1e-9) return false;
+  for (const n of notchesOf(b)) {
+    const r = notchRect(b, n);
+    // 切り欠きの内側（tol だけ内側に狭めた範囲）にあれば外
+    if (x > r.x0 + (r.x0 > 0 ? tol : -1) && x < r.x1 - (r.x1 < b.w ? tol : -1) && y > r.y0 + (r.y0 > 0 ? tol : -1) && y < r.y1 - (r.y1 < b.d ? tol : -1)) return false;
+  }
+  return true;
+}
+
+/** 建築面積（切り欠きを引いた外形の面積）。切り欠き同士は重ならない前提 */
+export function footprintArea(b: Building): number {
+  return b.w * b.d - notchesOf(b).reduce((s, n) => s + n.w * n.d, 0);
+}
+
+/** 外形の多角形（建物座標、反時計回り: 底辺左から） */
+export function footprintPolygon(b: Building): Pt[] {
+  const by = (c: Notch["corner"]) => notchesOf(b).find((n) => n.corner === c);
+  const sw = by("SW"), se = by("SE"), ne = by("NE"), nw = by("NW");
+  const pts: Pt[] = [];
+  if (sw) pts.push({ x: 0, y: sw.d }, { x: sw.w, y: sw.d }, { x: sw.w, y: 0 }); else pts.push({ x: 0, y: 0 });
+  if (se) pts.push({ x: b.w - se.w, y: 0 }, { x: b.w - se.w, y: se.d }, { x: b.w, y: se.d }); else pts.push({ x: b.w, y: 0 });
+  if (ne) pts.push({ x: b.w, y: b.d - ne.d }, { x: b.w - ne.w, y: b.d - ne.d }, { x: b.w - ne.w, y: b.d }); else pts.push({ x: b.w, y: b.d });
+  if (nw) pts.push({ x: nw.w, y: b.d }, { x: nw.w, y: b.d - nw.d }, { x: 0, y: b.d - nw.d }); else pts.push({ x: 0, y: b.d });
+  return pts;
+}
+
+/** 外形を重ならない矩形に分割（建物座標）。天空率・日影の立体を作るのに使う */
+export function footprintRects(b: Building): { x0: number; y0: number; x1: number; y1: number }[] {
+  const ns = notchesOf(b);
+  const ys = Array.from(new Set([0, b.d, ...ns.flatMap((n) => { const r = notchRect(b, n); return [r.y0, r.y1]; })])).sort((p, q) => p - q);
+  const out: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  for (let i = 0; i + 1 < ys.length; i++) {
+    const y0 = ys[i], y1 = ys[i + 1];
+    if (y1 - y0 < 1e-9) continue;
+    const ym = (y0 + y1) / 2;
+    let x0 = 0, x1 = b.w;
+    for (const n of ns) {
+      const r = notchRect(b, n);
+      if (ym > r.y0 && ym < r.y1) { if (r.x0 <= 1e-9) x0 = Math.max(x0, r.x1); else x1 = Math.min(x1, r.x0); }
+    }
+    if (x1 - x0 > 1e-9) out.push({ x0, y0, x1, y1 });
+  }
+  return out;
+}
+
+/** 建物座標 → 敷地座標 */
+export function buildingToWorld(b: Building, p: Pt): Pt {
+  const r = (b.rotDeg * Math.PI) / 180;
+  const cos = Math.cos(r), sin = Math.sin(r);
+  return { x: b.x + p.x * cos - p.y * sin, y: b.y + p.x * sin + p.y * cos };
+}
+
+/** 外形の多角形（敷地座標） */
+export function footprintWorld(b: Building): Pt[] {
+  return footprintPolygon(b).map((p) => buildingToWorld(b, p));
+}
+
+/**
+ * 屋根を「上面が平面の凸多角形」に分割する（建物座標、矩形全体を覆う）。
+ * 母屋下がりは含まない（天空率・日影では屋根を大きめに見る＝安全側）。
+ */
+export function roofPlanes(b: Building, eave: number, rise: number, maxHeight: number): { poly: Pt[]; top: (x: number, y: number) => number }[] {
+  const pitch = b.roofPitchSun / 10;
+  const R = (x0: number, y0: number, x1: number, y1: number): Pt[] => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  if (b.roof === "flat") return [{ poly: R(0, 0, b.w, b.d), top: () => maxHeight }];
+  if (b.roof === "shed") return [{ poly: R(0, 0, b.w, b.d), top: (x, y) => roofBase(b, Math.max(0, Math.min(b.w, x)), Math.max(0, Math.min(b.d, y)), eave, rise, pitch) }];
+  if (b.roof === "gable") {
+    const ridgeNS = b.roofHighSide === "N" || b.roofHighSide === "S";
+    const polys = ridgeNS ? [R(0, 0, b.w / 2, b.d), R(b.w / 2, 0, b.w, b.d)] : [R(0, 0, b.w, b.d / 2), R(0, b.d / 2, b.w, b.d)];
+    return polys.map((poly) => ({ poly, top: (x, y) => roofBase(b, x, y, eave, rise, pitch) }));
+  }
+  // 寄棟: 4 面。短辺方向の半分 h で棟が決まる
+  const h = Math.min(b.w, b.d) / 2;
+  const planes: { poly: Pt[]; top: (x: number, y: number) => number }[] = [];
+  if (b.w >= b.d) {
+    // 棟は x 方向（y = d/2、x ∈ [h, w−h]）
+    planes.push({ poly: [{ x: 0, y: 0 }, { x: b.w, y: 0 }, { x: b.w - h, y: h }, { x: h, y: h }], top: (_x, y) => eave + pitch * y }); // 底辺側の面
+    planes.push({ poly: [{ x: 0, y: b.d }, { x: h, y: b.d - h }, { x: b.w - h, y: b.d - h }, { x: b.w, y: b.d }], top: (_x, y) => eave + pitch * (b.d - y) }); // 奥側
+    planes.push({ poly: [{ x: 0, y: 0 }, { x: h, y: h }, { x: h, y: b.d - h }, { x: 0, y: b.d }], top: (x) => eave + pitch * x }); // 左
+    planes.push({ poly: [{ x: b.w, y: 0 }, { x: b.w, y: b.d }, { x: b.w - h, y: b.d - h }, { x: b.w - h, y: h }], top: (x) => eave + pitch * (b.w - x) }); // 右
+  } else {
+    planes.push({ poly: [{ x: 0, y: 0 }, { x: b.w, y: 0 }, { x: b.w - h, y: h }, { x: h, y: h }], top: (_x, y) => eave + pitch * y });
+    planes.push({ poly: [{ x: 0, y: b.d }, { x: h, y: b.d - h }, { x: b.w - h, y: b.d - h }, { x: b.w, y: b.d }], top: (_x, y) => eave + pitch * (b.d - y) });
+    planes.push({ poly: [{ x: 0, y: 0 }, { x: h, y: h }, { x: h, y: b.d - h }, { x: 0, y: b.d }], top: (x) => eave + pitch * x });
+    planes.push({ poly: [{ x: b.w, y: 0 }, { x: b.w, y: b.d }, { x: b.w - h, y: b.d - h }, { x: b.w - h, y: h }], top: (x) => eave + pitch * (b.w - x) });
+  }
+  return planes.filter((p) => polygonArea(p.poly) > 1e-9);
+}
+
+/** 凸多角形を半平面 (n·p ≥ c) で切る（Sutherland–Hodgman） */
+export function clipHalfPlane(poly: Pt[], n: Pt, c: number): Pt[] {
+  const out: Pt[] = [];
+  const m = poly.length;
+  for (let i = 0; i < m; i++) {
+    const a = poly[i], b = poly[(i + 1) % m];
+    const da = n.x * a.x + n.y * a.y - c;
+    const db = n.x * b.x + n.y * b.y - c;
+    if (da >= 0) out.push(a);
+    if ((da >= 0) !== (db >= 0)) {
+      const t = da / (da - db);
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out;
+}
+
+/** 凸多角形を軸に平行な矩形で切る */
+export function clipToRect(poly: Pt[], r: { x0: number; y0: number; x1: number; y1: number }): Pt[] {
+  let p = clipHalfPlane(poly, { x: 1, y: 0 }, r.x0);
+  p = clipHalfPlane(p, { x: -1, y: 0 }, -r.x1);
+  p = clipHalfPlane(p, { x: 0, y: 1 }, r.y0);
+  p = clipHalfPlane(p, { x: 0, y: -1 }, -r.y1);
+  return p;
+}
+
+/**
+ * 建物の立体を「凸多角形の底面＋平面の上面」の集まりにする（建物座標）。
+ * 屋根面ごとの区画 × 外形の矩形分割。天空率・日影の計算に使う。
+ */
+export function buildingSolids(b: Building, eave: number, rise: number, maxHeight: number): { poly: Pt[]; top: (x: number, y: number) => number }[] {
+  const out: { poly: Pt[]; top: (x: number, y: number) => number }[] = [];
+  for (const plane of roofPlanes(b, eave, rise, maxHeight)) for (const r of footprintRects(b)) {
+    const poly = clipToRect(plane.poly, r);
+    if (poly.length >= 3 && polygonArea(poly) > 1e-9) out.push({ poly, top: plane.top });
+  }
+  return out;
 }

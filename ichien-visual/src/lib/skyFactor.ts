@@ -5,7 +5,7 @@
  * - 前面道路は「道路」とした辺 1 本だけ。2 以上の道路、道路との高低差、入隅、水面・公園の緩和は未対応。
  * - 適合建築物: 敷地のうち、前面道路の境界線から後退距離ぶん下がった内側で、
  *   道路斜線（勾配 × (道路幅員 + 後退距離 + 距離)）に適合する高さの立体。適用距離の範囲に限る。
- * - 計画建築物: 建物の外形（矩形）＋屋根形状。適用距離の範囲に限る（令135条の6 第1項一号の「限る部分」）。
+ * - 計画建築物: 建物の外形（矩形、角の切り欠きあり）＋屋根形状（片流れ・切妻・寄棟・陸屋根）。適用距離の範囲に限る（令135条の6 第1項一号の「限る部分」）。
  * - 算定位置（令135条の9）: 道路の反対側の境界線（後退緩和がある場合はその分だけ外側の線）上で、
  *   敷地が道路に接する部分の両端に最も近い位置と、その間を道路幅員の 1/2 以内の等間隔で区切った位置。
  *   高さは道路の路面の中心＝GL±0 とする。
@@ -15,7 +15,7 @@
  */
 import type { Pt, Site, Building, GridSetting } from "./types";
 import { baseFrame, toLocal, type Frame } from "./grid";
-import { roofRise } from "./geometry";
+import { roofRise, buildingSolids, footprintPolygon } from "./geometry";
 
 export type SkyPoint = { index: number; u: number; v: number; plan: number; conform: number; ok: boolean };
 export type SkyResult = {
@@ -63,7 +63,9 @@ function clipPolygon(poly: Pt[], o: Pt, d: Pt): [number, number] | null {
 /** 仰角 θ・方位 φ のレイ（原点 o、高さ 0）が立体に当たるか */
 function hits(prism: Prism, o: Pt, cosT: number, sinT: number, cosP: number, sinP: number): boolean {
   if (prism.zmax <= 0) return false;
-  const d = { x: cosT * cosP, y: cosT * sinP };
+  // 水平方向の単位ベクトル。クリップで得る s はそのまま水平距離になる（以前は cosθ 倍のベクトルを使っていて
+  // 高さを s·tanθ と過大に見積もり、天空率が 0.5〜3 ポイント高く出ていた。閉じた式との検算で発見・修正）
+  const d = { x: cosP, y: sinP };
   // 水平距離 s に対して z = s·tanθ。仰角が高すぎて zmax に届く前に外へ出る場合も含め区間で判定
   const seg = clipPolygon(prism.poly, o, d);
   if (!seg) return false;
@@ -173,7 +175,7 @@ export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
   // 建物の4隅（世界座標 → 道路座標）
   const bf = baseFrame(site, grid.baseEdge);
   const toWorldB = (u: number, v: number) => ({ x: bf.a.x + u * bf.t.x + v * bf.n.x, y: bf.a.y + u * bf.t.y + v * bf.n.y });
-  const cornersW = [toWorldB(grid.u, grid.v), toWorldB(grid.u + b.w, grid.v), toWorldB(grid.u + b.w, grid.v + b.d), toWorldB(grid.u, grid.v + b.d)];
+  const cornersW = footprintPolygon(b).map((p) => toWorldB(grid.u + p.x, grid.v + p.y));
   const cornersR = cornersW.map((p) => toLocal(rf, p));
   // 後退距離 = 建物のうち道路に最も近い部分の v
   const back = Math.max(0, Math.min(...cornersR.map((p) => p.y)));
@@ -190,43 +192,22 @@ export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
   confPoly = clipHalf(confPoly, { x: 0, y: -1 }, -vMax);
   const conform: Prism[] = confPoly.length >= 3 ? [{ poly: confPoly, top: (_u, v) => slope * (roadW + back + v), zmax: slope * (roadW + back + vMax) }] : [];
 
-  // ---- 計画建築物: 建物矩形 ∩ {v ≤ vMax}、上面は屋根形状
-  // 屋根: 建物座標 (x: 底辺に沿って, y: 奥へ) で高さ関数を作り、道路座標に写す
+  // ---- 計画建築物: 建物の外形（切り欠き含む）× 屋根面ごとの区画。それぞれ上面が平面の立体
+  // 建物座標 (x: 底辺に沿って, y: 奥へ) の多角形を道路座標に写す
   const rise = roofRise(b);
   const eave = inp.eave;
-  const topLocal = (x: number, y: number): number => {
-    if (b.roof === "flat") return inp.maxHeight;
-    if (b.roof === "shed") {
-      const t = b.roofHighSide === "N" ? y / b.d : b.roofHighSide === "S" ? 1 - y / b.d : b.roofHighSide === "E" ? x / b.w : 1 - x / b.w;
-      return eave + rise * Math.max(0, Math.min(1, t));
-    }
-    // 切妻: 棟が roofHighSide の向き（N/S なら棟は南北方向）
-    const ridgeNS = b.roofHighSide === "N" || b.roofHighSide === "S";
-    const t = ridgeNS ? 1 - Math.abs(x / b.w - 0.5) * 2 : 1 - Math.abs(y / b.d - 0.5) * 2;
-    return eave + rise * Math.max(0, Math.min(1, t));
-  };
-  // 道路座標 → 建物座標
+  const toRoad = (p: Pt) => toLocal(rf, toWorldB(grid.u + p.x, grid.v + p.y));
   const toBuilding = (u: number, v: number) => {
     const w = { x: rf.a.x + u * rf.t.x + v * rf.n.x, y: rf.a.y + u * rf.t.y + v * rf.n.y };
     const l = toLocal(bf, w);
     return { x: l.x - grid.u, y: l.y - grid.v };
   };
   const planPrisms: Prism[] = [];
-  const rectR = cornersR;
-  const addPlan = (poly: Pt[]) => {
-    const clipped = clipHalf(poly, { x: 0, y: -1 }, -vMax);
-    if (clipped.length >= 3) planPrisms.push({ poly: clipped, top: (u, v) => { const p = toBuilding(u, v); return topLocal(p.x, p.y) - zOff; }, zmax: inp.maxHeight - zOff });
-  };
-  if (b.roof === "gable") {
-    // 屋根面が2枚なので、棟で2つの立体に分ける（それぞれ上面が平面）
-    const ridgeNS = b.roofHighSide === "N" || b.roofHighSide === "S";
-    const halves: Pt[][] = ridgeNS
-      ? [[toWorldB(grid.u, grid.v), toWorldB(grid.u + b.w / 2, grid.v), toWorldB(grid.u + b.w / 2, grid.v + b.d), toWorldB(grid.u, grid.v + b.d)], [toWorldB(grid.u + b.w / 2, grid.v), toWorldB(grid.u + b.w, grid.v), toWorldB(grid.u + b.w, grid.v + b.d), toWorldB(grid.u + b.w / 2, grid.v + b.d)]]
-      : [[toWorldB(grid.u, grid.v), toWorldB(grid.u + b.w, grid.v), toWorldB(grid.u + b.w, grid.v + b.d / 2), toWorldB(grid.u, grid.v + b.d / 2)], [toWorldB(grid.u, grid.v + b.d / 2), toWorldB(grid.u + b.w, grid.v + b.d / 2), toWorldB(grid.u + b.w, grid.v + b.d), toWorldB(grid.u, grid.v + b.d)]];
-    for (const h of halves) addPlan(h.map((p) => toLocal(rf, p)));
-  } else {
-    addPlan(rectR);
+  for (const solid of buildingSolids(b, eave, rise, inp.maxHeight)) {
+    const clipped = clipHalf(solid.poly.map(toRoad), { x: 0, y: -1 }, -vMax);
+    if (clipped.length >= 3) planPrisms.push({ poly: clipped, top: (u, v) => { const p = toBuilding(u, v); return solid.top(p.x, p.y) - zOff; }, zmax: inp.maxHeight - zOff });
   }
+  if (b.roofDrop && Object.values(b.roofDrop).some((v) => v && v > 0)) note.push("母屋下がりは天空率では無視（屋根を大きめに見る＝安全側）");
 
   // ---- 算定位置: 道路の反対側の境界線（v = −roadW − back）上。敷地が道路に接する部分の両端の u
   const uMin = Math.min(...siteR.filter((p) => Math.abs(p.y) < 1e-6).map((p) => p.x));

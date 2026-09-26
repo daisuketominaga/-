@@ -61,10 +61,23 @@ export type HeightRules = {
   kodoPresetId: string;
   kodoSegs: { from: number; upTo: number | null; base: number; slope: number }[];
   kodoAbsolute: number;
+  /** 高度地区の値の出どころ（資料から読み取ったときの表示用） */
+  kodoNote?: string;
   /** 絶対高さ制限 m（低層住専の 10m/12m など。0 なら無し） */
   absoluteMax: number;
   /** 天空率で道路斜線を検討する */
   skyEnabled: boolean;
+  /** 日影規制（法56条の2）。対象かどうかは都市計画図の「日影」欄で確認 */
+  shadowEnabled?: boolean;
+  /** 対象となる建物: 高さ 10m 超（"h10"）か、軒高 7m 超または 3 階以上（"eave7"、低層住専・田園住居） */
+  shadowTarget?: "h10" | "eave7";
+  /** 測定面の高さ m（1.5 / 4 / 6.5） */
+  shadowPlaneH?: number;
+  /** 5m 超〜10m 以内の範囲の日影時間の上限（h）と、10m 超の上限（h） */
+  shadowHours5?: number;
+  shadowHours10?: number;
+  /** 緯度（度）。冬至の太陽位置の計算用。横浜 35.45、東京 35.68 */
+  latitude?: number;
   /** 旧形式との互換用（使わない） */
   kodoBase?: number;
   kodoSlope?: number;
@@ -86,9 +99,18 @@ export const DEFAULT_HEIGHT_RULES: HeightRules = {
   kodoAbsolute: 0,
   absoluteMax: 0,
   skyEnabled: true,
+  shadowEnabled: false,
+  shadowTarget: "h10",
+  shadowPlaneH: 4,
+  shadowHours5: 4,
+  shadowHours10: 2.5,
+  latitude: 35.45,
 };
 
-export type RoofType = "flat" | "shed" | "gable";
+export type RoofType = "flat" | "shed" | "gable" | "hip";
+
+/** 建物外形の角の切り欠き（L字・コの字にする）。corner は建物座標での角（SW=底辺左, SE=底辺右, NE=奥右, NW=奥左）。w は幅方向、d は奥行方向の切り欠き寸法 m */
+export type Notch = { corner: "SW" | "SE" | "NE" | "NW"; w: number; d: number };
 
 export type Building = {
   /** 建物外形（矩形）の左下角の位置（敷地座標 m） */
@@ -113,6 +135,8 @@ export type Building = {
   eaveOverhang?: number;
   /** 母屋下がり m: 面ごとに、外壁からこの長さ内側の線から屋根勾配で下げる（北側斜線をかわす常套手段） */
   roofDrop?: Partial<Record<"N" | "S" | "E" | "W", number>>;
+  /** 角の切り欠き（L字形など）。無ければ矩形 */
+  notches?: Notch[];
   wallColor: string;
   accentColor: string;
   wallLabel: string;

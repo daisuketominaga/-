@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "./types";
-import { sampleProject, emptyProject, lessonProject1, lessonProject2 } from "./sample";
+import { sampleProject, emptyProject, lessonProject1, lessonProject2, lessonProject3 } from "./sample";
 
 const LEGACY_KEY = "ichien-visual-project-v1";
 const INDEX_KEY = "ichien-visual-projects-v1";
@@ -129,9 +129,9 @@ export function useProject() {
 
   /** 新しい物件を作って切り替える */
   const createProject = useCallback(
-    (kind: "empty" | "sample" | "copy" | "lesson1" | "lesson2") => {
+    (kind: "empty" | "sample" | "copy" | "lesson1" | "lesson2" | "lesson3") => {
       const id = uid();
-      const base = kind === "sample" ? sampleProject() : kind === "lesson1" ? lessonProject1() : kind === "lesson2" ? lessonProject2() : kind === "copy" && project ? { ...project, name: project.name + "（コピー）" } : emptyProject();
+      const base = kind === "sample" ? sampleProject() : kind === "lesson1" ? lessonProject1() : kind === "lesson2" ? lessonProject2() : kind === "lesson3" ? lessonProject3() : kind === "copy" && project ? { ...project, name: project.name + "（コピー）" } : emptyProject();
       const p = { ...base, updatedAt: new Date().toISOString() };
       persist(id, p);
       setCurrentId(id);

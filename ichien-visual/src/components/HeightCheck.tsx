@@ -6,7 +6,9 @@ import { TSUBO_M2 } from "@/lib/types";
 import { KODO_PRESETS, ZONE_PRESETS, ZONE_SOURCE } from "@/lib/heightPresets";
 import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits3D, levels, roadInfos, roadLevelOffset } from "@/lib/heightLimits";
 import { checkSkyFactor, type SkyResult } from "@/lib/skyFactor";
-import { polygonArea, round } from "@/lib/geometry";
+import { checkShadow, type ShadowResult } from "@/lib/shadow";
+import KodoImport from "./KodoImport";
+import { polygonArea, round, footprintArea, footprintWorld } from "@/lib/geometry";
 
 type Props = {
   project: Project;
@@ -18,7 +20,9 @@ type Row = { item: string; status: "ok" | "ng" | "unknown" | "na"; detail: strin
 /** 判定表（確認済み／超過／未確認）を作る。印刷画面でも使う */
 export type SkyAll = { road: string; result: SkyResult | { error: string } }[];
 
-export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
+export type ShadowAll = ShadowResult | { error: string } | null;
+
+export function verdictRows(project: Project, skyAll: SkyAll | null, shadow: ShadowAll = null): Row[] {
   const r = rulesOf(project);
   const b = project.building;
   const lv = levels(b);
@@ -31,7 +35,7 @@ export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
 
   // 建ぺい率・容積率
   const siteArea = project.site.areaOverride ?? polygonArea(project.site.points);
-  const bArea = b.w * b.d;
+  const bArea = footprintArea(b);
   const cov = (bArea / siteArea) * 100;
   const covLimit = project.site.coverageRatio + (project.site.cornerLot ? 10 : 0);
   rows.push({ item: "建ぺい率", status: cov <= covLimit + 1e-9 ? "ok" : "ng", detail: `${round(cov, 1)}%（上限 ${covLimit}%${project.site.cornerLot ? "＝指定＋角地10%" : ""}）建築面積 ${round(bArea, 2)}㎡` });
@@ -84,7 +88,11 @@ export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
 
   const abs = lims.find((l) => l.key === "abs");
   if (r.absoluteMax > 0) rows.push({ item: "絶対高さ（法55条）", status: abs && abs.over > 0 ? "ng" : "ok", detail: `${r.absoluteMax}m（最高高さ ${mm(lv.max)}mm）` });
-  rows.push({ item: "日影規制", status: "unknown", detail: "未対応。対象区域・測定面・時間は役所で確認" });
+  if (!r.shadowEnabled) rows.push({ item: "日影規制", status: "unknown", detail: "未設定。都市計画図の「日影」欄（対象・測定面・時間）を見て設定してください" });
+  else if (!shadow) rows.push({ item: "日影規制", status: "unknown", detail: "未計算" });
+  else if ("error" in shadow) rows.push({ item: "日影規制", status: "unknown", detail: shadow.error });
+  else if (!shadow.target) rows.push({ item: "日影規制", status: "na", detail: `対象外: ${shadow.targetNote}。参考: 対象だった場合の日影時間は 5〜10m ${round(shadow.band5.max, 2)}h／10m超 ${round(shadow.band10.max, 2)}h` });
+  else rows.push({ item: "日影規制", status: shadow.ok ? "ok" : "ng", detail: `${shadow.targetNote}。測定面 ${shadow.planeH}m、冬至 8〜16時（真太陽時）。5m超10m以内 最大 ${round(shadow.band5.max, 2)}h（上限 ${shadow.hours5}h）、10m超 最大 ${round(shadow.band10.max, 2)}h（上限 ${shadow.hours10}h）${shadow.note.length ? "。" + shadow.note.join("。") : ""}` });
   rows.push({ item: "防火・準防火", status: "unknown", detail: "未対応（外壁・開口部の仕様に影響）" });
   return rows;
 }
@@ -104,13 +112,22 @@ export function useSky(project: Project): SkyAll | null {
   }, [project]);
 }
 
+export function useShadow(project: Project): ShadowAll {
+  return useMemo(() => {
+    const r = rulesOf(project);
+    if (!r.shadowEnabled) return null;
+    return checkShadow(project, 1.0);
+  }, [project]);
+}
+
 export default function HeightCheck({ project, setProject }: Props) {
   const r = rulesOf(project);
   const { site, building: b } = project;
   const setR = (next: HeightRules) => setProject((p) => ({ ...p, site: { ...p.site, heightRules: next } }));
   const patch = (x: Partial<HeightRules>) => setR({ ...r, ...x });
   const sky = useSky(project);
-  const rows = verdictRows(project, sky);
+  const shadow = useShadow(project);
+  const rows = verdictRows(project, sky, shadow);
   const prefs = ["東京都", "神奈川県"] as const;
   const kp = KODO_PRESETS.find((k) => k.id === r.kodoPresetId);
   const lv = levels(b);
@@ -167,6 +184,8 @@ export default function HeightCheck({ project, setProject }: Props) {
                 </optgroup>
               ))}
             </select>
+            {r.kodoNote && !kp && <div className="rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-900">値の出どころ: {r.kodoNote}</div>}
+            <KodoImport defaultKind={kp?.name.replace(/（.*$/, "") ?? "第1種高度地区"} city={kp?.city} onResult={(res) => setR({ ...r, kodoEnabled: true, kodoPresetId: "", kodoSegs: res.segs, kodoAbsolute: res.absoluteMax, kodoNote: res.label })} />
             {kp && (
               <div className="rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900">
                 【要確認】この数値は検索結果の要約からの転記で、原文は未確認です。{kp.note ? kp.note + "。" : ""}
@@ -227,6 +246,36 @@ export default function HeightCheck({ project, setProject }: Props) {
           ); })()}
         </div>
       ))}
+      {/* 日影規制 */}
+      <div className="space-y-1 text-xs">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={!!r.shadowEnabled} onChange={(e) => patch({ shadowEnabled: e.target.checked })} /><span className="font-medium">日影規制（法56条の2・参考計算）</span></label>
+        {r.shadowEnabled && (
+          <>
+            <div className="grid grid-cols-2 gap-1 text-[10px]">
+              <label className="flex flex-col"><span className="text-slate-400">対象の建物</span>
+                <select className="field px-1 py-0.5" value={r.shadowTarget ?? "h10"} onChange={(e) => patch({ shadowTarget: e.target.value as "h10" | "eave7" })}>
+                  <option value="h10">高さ 10m 超（住居系・近商・準工 など）</option>
+                  <option value="eave7">軒高 7m 超 or 3 階以上（低層住専・田園住居）</option>
+                </select>
+              </label>
+              <label className="flex flex-col"><span className="text-slate-400">測定面の高さ m</span>
+                <select className="field px-1 py-0.5" value={r.shadowPlaneH ?? 4} onChange={(e) => patch({ shadowPlaneH: Number(e.target.value) })}>
+                  <option value={1.5}>1.5（低層住専・田園住居）</option>
+                  <option value={4}>4</option>
+                  <option value={6.5}>6.5</option>
+                </select>
+              </label>
+              <label className="flex flex-col"><span className="text-slate-400">5m超〜10m の上限 h</span><input type="number" step="0.5" className="field px-1 py-0.5" value={r.shadowHours5 ?? 4} onChange={(e) => patch({ shadowHours5: Number(e.target.value) })} /></label>
+              <label className="flex flex-col"><span className="text-slate-400">10m 超の上限 h</span><input type="number" step="0.5" className="field px-1 py-0.5" value={r.shadowHours10 ?? 2.5} onChange={(e) => patch({ shadowHours10: Number(e.target.value) })} /></label>
+              <label className="flex flex-col"><span className="text-slate-400">緯度（横浜 35.45／東京 35.68）</span><input type="number" step="0.01" className="field px-1 py-0.5" value={r.latitude ?? 35.45} onChange={(e) => patch({ latitude: Number(e.target.value) })} /></label>
+            </div>
+            {shadow && !("error" in shadow) && <ShadowDiagram project={project} shadow={shadow} />}
+            {shadow && "error" in shadow && <div className="text-red-600">{shadow.error}</div>}
+            <p className="text-[10px] leading-relaxed text-slate-500">対象・測定面・時間の組み合わせは自治体の条例で決まります（都市計画図の「日影」欄の値をそのまま入力）。冬至の真太陽時 8〜16 時を 5 分刻みで計算し、道路等に接する辺は幅の 1/2 外側を境界とみなします（令135条の12）。隣地の高低差・北海道の時間帯は未対応。</p>
+          </>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="flex flex-col"><span className="text-[9px] text-slate-400">敷地が道路より高い量 m（令135条の2）</span><input type="number" step="0.1" className="field px-1 py-0.5" value={site.roadLevelDiff ?? 0} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, roadLevelDiff: Number(e.target.value) } }))} /></label>
         <label className="flex items-center gap-2 self-end"><input type="checkbox" checked={!!site.cornerLot} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, cornerLot: e.target.checked } }))} />角地の建ぺい率緩和（＋10%）</label>
@@ -262,6 +311,42 @@ function SkyDiagram({ sky }: { sky: SkyResult }) {
       <div className="text-[10px] leading-relaxed text-slate-600">
         最も厳しい位置 P{worst.index} の天空図。<span className="text-red-700">赤＝適合建築物</span>、<span className="text-blue-700">青＝計画建築物</span>。青の面積が赤以下なら適合（空が広い）。
       </div>
+    </div>
+  );
+}
+
+
+/** 日影のサンプル図: 敷地・みなし境界・5m/10m 線と、日影時間で色分けした点 */
+function ShadowDiagram({ project, shadow }: { project: Project; shadow: ShadowResult }) {
+  const pts = [...shadow.lines.l10, ...project.site.points, ...shadow.samples];
+  const minX = Math.min(...pts.map((p) => p.x)) - 1, maxX = Math.max(...pts.map((p) => p.x)) + 1;
+  const minY = Math.min(...pts.map((p) => p.y)) - 1, maxY = Math.max(...pts.map((p) => p.y)) + 1;
+  const W = 300;
+  const sc = W / (maxX - minX);
+  const H = (maxY - minY) * sc;
+  const X = (x: number) => (x - minX) * sc;
+  const Y = (y: number) => (maxY - y) * sc;
+  const poly = (ps: { x: number; y: number }[]) => ps.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ");
+  const fp = footprintWorld(project.building);
+  const color = (h: number, band: number) => {
+    const lim = band === 10 ? shadow.hours10 : band === 5 ? shadow.hours5 : Infinity;
+    if (h > lim) return "#dc2626";
+    const t = Math.min(1, h / 8);
+    return `rgba(30,64,175,${0.12 + t * 0.7})`;
+  };
+  return (
+    <div className="space-y-1">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full rounded border bg-white">
+        {shadow.samples.map((s, i) => <rect key={i} x={X(s.x) - (shadow.step * sc) / 2} y={Y(s.y) - (shadow.step * sc) / 2} width={shadow.step * sc} height={shadow.step * sc} fill={color(s.h, s.band)} />)}
+        <polygon points={poly(shadow.lines.l10)} fill="none" stroke="#7c3aed" strokeWidth={1} strokeDasharray="4 2" />
+        <polygon points={poly(shadow.lines.l5)} fill="none" stroke="#7c3aed" strokeWidth={1} strokeDasharray="2 2" />
+        <polygon points={poly(shadow.lines.boundary)} fill="none" stroke="#b45309" strokeWidth={0.8} />
+        <polygon points={poly(project.site.points)} fill="rgba(246,234,211,0.6)" stroke="#1b2430" strokeWidth={1} />
+        <polygon points={poly(fp)} fill="#2f6fed" fillOpacity={0.5} stroke="#1d479c" strokeWidth={1} />
+        {shadow.band5.at && <circle cx={X(shadow.band5.at.x)} cy={Y(shadow.band5.at.y)} r={3} fill="none" stroke={shadow.band5.ok ? "#059669" : "#dc2626"} strokeWidth={1.5} />}
+        {shadow.band10.at && <circle cx={X(shadow.band10.at.x)} cy={Y(shadow.band10.at.y)} r={3} fill="none" stroke={shadow.band10.ok ? "#059669" : "#dc2626"} strokeWidth={1.5} />}
+      </svg>
+      <div className="text-[10px] text-slate-500">青が濃いほど日影時間が長い（赤＝上限超え）。茶＝みなし境界線、紫の破線＝5m・10m 線、○＝各範囲で最も長い点。太陽高度: {shadow.sun.map((s) => `${Math.floor(s.t)}時 ${s.alt}°`).join("、")}</div>
     </div>
   );
 }

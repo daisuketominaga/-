@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useRef } from "react";
-import type { Project, Pt } from "@/lib/types";
+import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, polygonArea, northScreenDeg } from "@/lib/geometry";
+import { insetPolygon, round, polygonArea, northScreenDeg, footprintArea, notchesOf, footprintPolygon } from "@/lib/geometry";
 import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, rectFits, modules, clearances, roadBands } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
@@ -15,6 +15,8 @@ type Props = {
 };
 
 const PX = 44;
+
+const CORNER_LABEL: Record<Notch["corner"], string> = { SW: "底辺側・左の角", SE: "底辺側・右の角", NE: "奥・右の角", NW: "奥・左の角" };
 
 export default function BuildableGrid({ project, setProject, readOnly }: Props) {
   const { site, grid, building } = project;
@@ -46,7 +48,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
 
   const fits = rectFits(frame, inner, grid.u, grid.v, building.w, building.d);
   const area = site.areaOverride ?? polygonArea(site.points);
-  const bArea = building.w * building.d;
+  const bArea = footprintArea(building);
+  const notches = notchesOf(building);
   const coverage = (bArea / area) * 100;
   const cl = clearances(site, grid, building.w, building.d);
 
@@ -66,6 +69,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       const d = patch.d !== undefined ? Math.max(HALF, snapHalf(patch.d)) : p.building.d;
       return { ...p, grid: g, building: buildingFromGrid(p.site, g, w, d, p.building) };
     });
+
+  const setNotches = (notches: Notch[]) => setProject((p) => ({ ...p, building: { ...p.building, notches } }));
 
   const autoMax = () => {
     const best = maxRect(site, grid.baseEdge, setback);
@@ -143,6 +148,23 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           <Stepper label="位置：底辺の始点から" value={grid.u} onChange={(v) => apply({ u: v })} min={-50} />
           <Stepper label="位置：底辺から内側へ" value={grid.v} onChange={(v) => apply({ v: v })} min={-50} />
           <button className="btn-primary w-full justify-center" onClick={autoMax}>離れ線の内側で最大の枠にする</button>
+          <div className="space-y-1 rounded border border-slate-200 p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-700">角の切り欠き（L字・コの字にする）</span>
+              <select className="field w-auto px-1 py-0.5 text-xs" value="" onChange={(e) => { const c = e.target.value as Notch["corner"]; if (!c) return; setNotches([...(building.notches ?? []).filter((n) => n.corner !== c), { corner: c, w: MODULE, d: MODULE }]); }}>
+                <option value="">＋角を選ぶ</option>
+                {(["SW", "SE", "NE", "NW"] as const).filter((c) => !(building.notches ?? []).some((n) => n.corner === c)).map((c) => <option key={c} value={c}>{CORNER_LABEL[c]}</option>)}
+              </select>
+            </div>
+            {(building.notches ?? []).map((n) => (
+              <div key={n.corner} className="rounded bg-slate-50 p-1 text-xs">
+                <div className="flex items-center justify-between"><b>{CORNER_LABEL[n.corner]}</b><button className="btn-ghost px-2 py-0 text-red-500" onClick={() => setNotches((building.notches ?? []).filter((x) => x.corner !== n.corner))}>✕</button></div>
+                <Stepper label="幅方向" value={n.w} onChange={(v) => setNotches((building.notches ?? []).map((x) => (x.corner === n.corner ? { ...x, w: Math.min(Math.max(HALF, snapHalf(v)), building.w - HALF) } : x)))} />
+                <Stepper label="奥行方向" value={n.d} onChange={(v) => setNotches((building.notches ?? []).map((x) => (x.corner === n.corner ? { ...x, d: Math.min(Math.max(HALF, snapHalf(v)), building.d - HALF) } : x)))} />
+              </div>
+            ))}
+            {!(building.notches ?? []).length && <p className="text-[11px] text-slate-500">矩形以外の建物は、外接する枠を決めてから角を切り欠きます。建築面積・斜線・天空率・日影は切り欠き後の形で計算します。</p>}
+          </div>
           <div className="rounded bg-slate-50 p-2 text-xs leading-relaxed">
             <div>枠: <b>{modules(building.w)}マス × {modules(building.d)}マス</b>（1マス=910mm）</div>
             <div>建築面積 <b>{round(bArea, 2)} m²</b>（{round(bArea / TSUBO_M2, 2)}坪）</div>
@@ -192,12 +214,13 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             {/* 離れ線 */}
             {setback > 0 && <polygon points={innerLoc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")} fill="none" stroke="#c0392b" strokeWidth={1.2} strokeDasharray="6 4" />}
             {/* 建物の枠 */}
-            <rect x={Math.min(X(bu), X(bu + bw))} y={Math.min(Y(bv), Y(bv + bd))} width={bw * PX} height={bd * PX} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} />
+            {notches.length > 0 && <rect x={Math.min(X(bu), X(bu + bw))} y={Math.min(Y(bv), Y(bv + bd))} width={bw * PX} height={bd * PX} fill="none" stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={1} strokeDasharray="4 3" />}
+            <polygon points={footprintPolygon(building).map((q) => `${X(bu + q.x)},${Y(bv + q.y)}`).join(" ")} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} strokeLinejoin="round" />
             <text x={X(bu + bw / 2)} y={Y(bv + bd / 2)} textAnchor="middle" fontSize={14} fontWeight={700} fill={fits ? "#1d479c" : "#c0392b"}>
               {modules(building.w)}×{modules(building.d)}マス
             </text>
             <text x={X(bu + bw / 2)} y={Y(bv + bd / 2) + 18} textAnchor="middle" fontSize={11} fill="#1d479c">
-              {building.w.toFixed(2)}m × {building.d.toFixed(2)}m ＝ {round(bArea, 2)}m²
+              {building.w.toFixed(2)}m × {building.d.toFixed(2)}m{notches.length ? "（切り欠き後）" : " ＝"} {round(bArea, 2)}m²
             </text>
             {/* 境界までの寸法 */}
             {cl.bottom !== null && <Dim a={{ x: bu + bw * 0.25, y: bv }} b={{ x: bu + bw * 0.25, y: bv - cl.bottom }} label={mm(cl.bottom)} side="v" />}

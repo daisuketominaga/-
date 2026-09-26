@@ -3,12 +3,12 @@
 import { useRef } from "react";
 import type { Project } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { round, roadFaceOf } from "@/lib/geometry";
+import { round, roadFaceOf, footprintArea } from "@/lib/geometry";
 import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
 import { AllElevationsSvg, elevationTitle } from "./Elevation";
-import { verdictRows, useSky } from "./HeightCheck";
+import { verdictRows, useSky, useShadow } from "./HeightCheck";
 import FixtureSchedule from "./FixtureSchedule";
 
 type Props = {
@@ -30,7 +30,8 @@ export default function PrintView({ project, setProject }: Props) {
   const summary = `${bedrooms}${hasLdk ? "LDK" : "K"}${extras.length ? "＋" + extras.join("＋") : ""}`;
   const siteArea = project.site.areaOverride ?? 0;
   const sky = useSky(project);
-  const rows = verdictRows(project, sky);
+  const shadow = useShadow(project);
+  const rows = verdictRows(project, sky, shadow);
 
   return (
     <div className="space-y-4">
@@ -68,7 +69,7 @@ export default function PrintView({ project, setProject }: Props) {
         <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
           <span>間取り {summary}</span>
           {siteArea > 0 && <span>敷地面積 {round(siteArea, 2)}㎡（{round(siteArea / TSUBO_M2, 2)}坪）</span>}
-          <span>建築面積 {round(b.w * b.d, 2)}㎡</span>
+          <span>建築面積 {round(footprintArea(b), 2)}㎡</span>
           {project.floors.map((f) => (
             <span key={f.level}>{f.level}階 {round(floorArea(f), 2)}㎡{balconyArea(f) ? `（＋バルコニー ${round(balconyArea(f), 2)}㎡）` : ""}</span>
           ))}

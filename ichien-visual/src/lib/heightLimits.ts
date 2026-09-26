@@ -5,7 +5,7 @@
 import type { Project, Face, HeightRules, Building } from "./types";
 import { DEFAULT_HEIGHT_RULES } from "./types";
 import { clearances } from "./grid";
-import { faceLength, faceNormalWorld, roofRise, facePointWorld, buildingCorners, roofHeightAt, distToSegment } from "./geometry";
+import { faceLength, faceNormalWorld, roofRise, facePointWorld, roofHeightAt, distToSegment, insideFootprint, footprintWorld } from "./geometry";
 import { baseFrame, toLocal } from "./grid";
 import { KODO_PRESETS, ZONE_PRESETS } from "./heightPresets";
 
@@ -100,7 +100,7 @@ export function roadInfos(project: Project): RoadInfo[] {
   const { site, building: b } = project;
   const roads = site.edges.filter((e) => e.road && e.index < site.points.length);
   if (!roads.length) return [];
-  const corners = buildingCorners(b);
+  const corners = footprintWorld(b); // 切り欠きを含む外形の頂点
   const maxW = Math.max(...roads.map((e) => e.roadWidth ?? 4));
   const maxRoad = roads.find((e) => (e.roadWidth ?? 4) === maxW)!;
   const fMax = baseFrame(site, maxRoad.index);
@@ -117,8 +117,8 @@ export function roadInfos(project: Project): RoadInfo[] {
     // この道路に最も向いている面
     const a = site.points[e.index];
     const c2 = site.points[(e.index + 1) % site.points.length];
-    const cx = corners.reduce((s2, p) => s2 + p.x, 0) / 4;
-    const cy = corners.reduce((s2, p) => s2 + p.y, 0) / 4;
+    const cx = corners.reduce((s2, p) => s2 + p.x, 0) / corners.length;
+    const cy = corners.reduce((s2, p) => s2 + p.y, 0) / corners.length;
     const d = { x: (a.x + c2.x) / 2 - cx, y: (a.y + c2.y) / 2 - cy };
     let best: Face = "S";
     let bestDot = -Infinity;
@@ -304,9 +304,8 @@ export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
   const kodoAbs = r.kodoEnabled ? r.kodoAbsolute : 0;
   for (let x = -e; x <= b.w + e + 1e-9; x += step) {
     for (let y = -e; y <= b.d + e + 1e-9; y += step) {
-      const inside = x >= -1e-9 && x <= b.w + 1e-9 && y >= -1e-9 && y <= b.d + 1e-9;
-      // 軒の出の範囲: 外壁から e 以内（角は矩形で近似）
-      if (!inside && (x < -e || x > b.w + e || y < -e || y > b.d + e)) continue;
+      // 外形（切り欠き後）＋軒の出の範囲だけを判定（角は矩形で近似）
+      if (!insideFootprint(b, x, y, e)) continue;
       const z = roofHeightAt(b, x, y, lv.eave, rise, lv.max);
       const P = toWorld(x, y);
       for (const { rd, f } of roadFrames) {
@@ -329,4 +328,33 @@ export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
     }
   }
   return Array.from(acc.values());
+}
+
+
+/**
+ * 立面図用の輪郭: 面を外から見て左端から m の位置での、屋根の最も高い見え掛かりの高さ（GL 基準）。
+ * 寄棟・母屋下がり・切り欠きを含めて roofHeightAt を奥行方向に走査して求める。
+ */
+export function elevationSilhouette(b: Building, face: Face, nSamples = 96): { m: number; z: number }[] {
+  const lv = levels(b);
+  const rise = roofRise(b);
+  const len = faceLength(b, face);
+  const depth = face === "N" || face === "S" ? b.d : b.w;
+  const out: { m: number; z: number }[] = [];
+  const nDepth = 64;
+  for (let i = 0; i <= nSamples; i++) {
+    const m = (len * i) / nSamples;
+    let z = -Infinity;
+    for (let j = 0; j <= nDepth; j++) {
+      const t = (depth * j) / nDepth;
+      const x = face === "S" ? m : face === "N" ? b.w - m : face === "W" ? t : b.w - t;
+      const y = face === "S" ? t : face === "N" ? b.d - t : face === "W" ? b.d - m : m;
+      // 外壁面の少し内側で評価（境界の丸め対策）
+      const xi = Math.min(Math.max(x, 1e-4), b.w - 1e-4), yi = Math.min(Math.max(y, 1e-4), b.d - 1e-4);
+      if (!insideFootprint(b, xi, yi)) continue;
+      z = Math.max(z, roofHeightAt(b, xi, yi, lv.eave, rise, lv.max));
+    }
+    out.push({ m, z: Number.isFinite(z) ? z : lv.eave });
+  }
+  return out;
 }

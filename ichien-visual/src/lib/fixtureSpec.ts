@@ -1,5 +1,6 @@
 import type { FixtureKind, Project, Fixture } from "./types";
 import { FIXTURE_LABEL } from "./types";
+import { fixtureFace } from "./openings";
 
 /**
  * 建具の標準仕様（建具表・見積の下書き用）。
@@ -64,8 +65,7 @@ export type ScheduleRow = {
 /** 建具表: 階・種類・幅ごとにまとめ、記号を振る */
 export function fixtureSchedule(project: Project): ScheduleRow[] {
   const b = project.building;
-  const eps = 1e-6;
-  const isExterior = (fx: Fixture) => (fx.along === "h" && (Math.abs(fx.y) < eps || Math.abs(fx.y - b.d) < eps)) || (fx.along === "v" && (Math.abs(fx.x) < eps || Math.abs(fx.x - b.w) < eps));
+  const isExterior = (fx: Fixture) => fixtureFace(b, fx) !== null;
   const map = new Map<string, ScheduleRow>();
   for (const f of project.floors) {
     for (const fx of f.fixtures ?? []) {

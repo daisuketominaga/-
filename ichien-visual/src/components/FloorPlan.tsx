@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
-import type { Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
+import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
-import { round, northScreenDeg } from "@/lib/geometry";
+import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { siteInBuildingFrame, type SiteContext } from "@/lib/grid";
 import FixtureSchedule from "./FixtureSchedule";
@@ -34,14 +34,17 @@ const WIDTH_CHOICES: Record<FixtureKind, number[]> = {
 };
 
 /** 外壁と部屋の境界線を壁の候補として集める */
-function wallSegments(bw: number, bd: number, rooms: Room[]): Wall[] {
-  const walls: Wall[] = [
-    { x1: 0, y1: 0, x2: bw, y2: 0, along: "h", outer: true },
-    { x1: 0, y1: bd, x2: bw, y2: bd, along: "h", outer: true },
-    { x1: 0, y1: 0, x2: 0, y2: bd, along: "v", outer: true },
-    { x1: bw, y1: 0, x2: bw, y2: bd, along: "v", outer: true },
-  ];
+function wallSegments(b: Building, rooms: Room[]): Wall[] {
+  // 外壁 = 外形（切り欠き後）の各辺
+  const poly = footprintPolygon(b);
+  const walls: Wall[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    if (Math.abs(a.y - c.y) < 1e-9) walls.push({ x1: Math.min(a.x, c.x), y1: a.y, x2: Math.max(a.x, c.x), y2: a.y, along: "h", outer: true });
+    else walls.push({ x1: a.x, y1: Math.min(a.y, c.y), x2: a.x, y2: Math.max(a.y, c.y), along: "v", outer: true });
+  }
   const eps = 1e-6;
+  const onOuter = (e: Wall) => walls.some((w) => w.outer && w.along === e.along && (e.along === "h" ? Math.abs(w.y1 - e.y1) < eps && e.x1 >= w.x1 - eps && e.x2 <= w.x2 + eps : Math.abs(w.x1 - e.x1) < eps && e.y1 >= w.y1 - eps && e.y2 <= w.y2 + eps));
   for (const r of rooms) {
     if (r.type === "balcony") continue;
     const edges: Wall[] = [
@@ -50,10 +53,7 @@ function wallSegments(bw: number, bd: number, rooms: Room[]): Wall[] {
       { x1: r.x, y1: r.y, x2: r.x, y2: r.y + r.d, along: "v", outer: false },
       { x1: r.x + r.w, y1: r.y, x2: r.x + r.w, y2: r.y + r.d, along: "v", outer: false },
     ];
-    for (const e of edges) {
-      const onOuter = (e.along === "h" && (Math.abs(e.y1) < eps || Math.abs(e.y1 - bd) < eps)) || (e.along === "v" && (Math.abs(e.x1) < eps || Math.abs(e.x1 - bw) < eps));
-      if (!onOuter) walls.push(e);
-    }
+    for (const e of edges) if (!onOuter(e)) walls.push(e);
   }
   return walls;
 }
@@ -151,7 +151,7 @@ export default function FloorPlan({ project, setProject }: Props) {
   const fixtures: Fixture[] = floor.fixtures ?? [];
   const updateFx = (id: string, patch: Partial<Fixture>) => setFloor((f) => ({ ...f, fixtures: (f.fixtures ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
   const removeFx = (id: string) => { setFloor((f) => ({ ...f, fixtures: (f.fixtures ?? []).filter((x) => x.id !== id) })); setSel(null); };
-  const walls = wallSegments(building.w, building.d, floor.rooms);
+  const walls = wallSegments(building, floor.rooms);
 
   const addFx = (kind: FixtureKind, at: { x: number; y: number }) => {
     const width = FIXTURE_DEFAULT_WIDTH[kind];
@@ -295,7 +295,7 @@ export default function FloorPlan({ project, setProject }: Props) {
   /** 建具が新しい間取りの壁の上に残っているか */
   const fixtureOnWall = (fx: Fixture, rooms: Room[]) => {
     const eps = 1e-6;
-    return wallSegments(building.w, building.d, rooms).some((w) => {
+    return wallSegments(building, rooms).some((w) => {
       if (w.along !== fx.along) return false;
       if (w.along === "h") return Math.abs(w.y1 - fx.y) < eps && fx.x >= w.x1 - eps && fx.x + fx.width <= w.x2 + eps;
       return Math.abs(w.x1 - fx.x) < eps && fx.y >= w.y1 - eps && fx.y + fx.width <= w.y2 + eps;
@@ -341,8 +341,14 @@ export default function FloorPlan({ project, setProject }: Props) {
     const s = new Set<string>();
     const rs = floor.rooms.filter((r) => r.type !== "balcony");
     for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) if (overlaps(rs[i], rs[j])) { s.add(rs[i].id); s.add(rs[j].id); }
+    // 切り欠き（建物の外）にかかる部屋も赤
+    for (const n of notchesOf(building)) {
+      const r = notchRect(building, n);
+      const nr: Room = { id: "notch", name: "", type: "other", x: r.x0, y: r.y0, w: r.x1 - r.x0, d: r.y1 - r.y0 };
+      for (const room of floor.rooms) if (overlaps(room, nr)) s.add(room.id);
+    }
     return s;
-  }, [floor.rooms]);
+  }, [floor.rooms, building]);
 
   // キーボード操作（図をクリックして選んだ後）
   const onKey = (e: React.KeyboardEvent) => {
@@ -475,7 +481,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             <tbody>
               <Row k="間取り" v={summary} />
               <Row k="敷地面積" v={siteArea ? `${round(siteArea, 2)}㎡（${round(siteArea / TSUBO_M2, 2)}坪）` : "未入力"} />
-              <Row k="建築面積" v={`${round(building.w * building.d, 2)}㎡`} />
+              <Row k="建築面積" v={`${round(footprintArea(building), 2)}㎡`} />
               {project.floors.map((f) => (
                 <Row key={f.level} k={`${f.level}階`} v={`${round(floorArea(f), 2)}㎡${balconyArea(f) ? `（＋バルコニー ${round(balconyArea(f), 2)}㎡）` : ""}`} />
               ))}
@@ -767,13 +773,14 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
   const wallW = compact ? 4 : 6;
   return (
     <g>
-      <rect x={ox} y={oy} width={b.w * px} height={b.d * px} fill="#fbf7ef" stroke="#1b1b1b" strokeWidth={wallW} data-bg="1" />
+      <rect x={ox} y={oy} width={b.w * px} height={b.d * px} fill="#fbf7ef" stroke="none" data-bg="1" />
       {Array.from({ length: Math.floor(b.w / HALF + 1e-6) }, (_, i) => (i + 1) * HALF).map((u) => (
         <line key={"gu" + u} x1={ox + u * px} y1={oy} x2={ox + u * px} y2={oy + b.d * px} stroke={Math.abs((u / MODULE) % 1) < 1e-6 || Math.abs((u / MODULE) % 1 - 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} style={{ pointerEvents: "none" }} />
       ))}
       {Array.from({ length: Math.floor(b.d / HALF + 1e-6) }, (_, i) => (i + 1) * HALF).map((v) => (
         <line key={"gv" + v} x1={ox} y1={oy + (b.d - v) * px} x2={ox + b.w * px} y2={oy + (b.d - v) * px} stroke={Math.abs((v / MODULE) % 1) < 1e-6 || Math.abs((v / MODULE) % 1 - 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} style={{ pointerEvents: "none" }} />
       ))}
+      {notchesOf(b).map((n) => { const r = notchRect(b, n); const p0 = toPx(r.x0, r.y1); const p1 = toPx(r.x1, r.y0); return <rect key={"notch" + n.corner} x={Math.min(p0.x, p1.x)} y={Math.min(p0.y, p1.y)} width={n.w * px} height={n.d * px} fill="#fff" data-bg="1" />; })}
       {floor.rooms.map((r) => {
         const p0 = toPx(r.x, r.y + r.d);
         const p1 = toPx(r.x + r.w, r.y);
@@ -809,6 +816,8 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
           </g>
         );
       })}
+      {/* 外形線は部屋の上に描く（切り欠きが見えるように） */}
+      <polygon points={footprintPolygon(b).map((q) => { const t = toPx(q.x, q.y); return `${t.x},${t.y}`; }).join(" ")} fill="none" stroke="#1b1b1b" strokeWidth={wallW} strokeLinejoin="miter" style={{ pointerEvents: "none" }} />
     </g>
   );
 }
@@ -1158,7 +1167,7 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
           const lines: [string, string][] = [
             ["間取り", summary],
             ["敷地面積", siteArea ? `${round(siteArea, 2)}㎡（${round(siteArea / TSUBO_M2, 2)}坪）` : "－"],
-            ["建築面積", `${round(b.w * b.d, 2)}㎡`],
+            ["建築面積", `${round(footprintArea(b), 2)}㎡`],
             ...project.floors.map((f) => [`${f.level}階`, `${round(floorArea(f), 2)}㎡${balconyArea(f) ? `（＋バルコニー ${round(balconyArea(f), 2)}㎡）` : ""}`] as [string, string]),
             ["延床面積", `${round(total, 2)}㎡（${round(total / TSUBO_M2, 2)}坪）`],
           ];
