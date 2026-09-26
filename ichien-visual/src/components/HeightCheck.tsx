@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import type { Project, HeightRules } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
 import { KODO_PRESETS, ZONE_PRESETS, ZONE_SOURCE } from "@/lib/heightPresets";
-import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits, levels, northFaceOf, FACE_BASE } from "@/lib/heightLimits";
+import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits, levels, northFaceOf, FACE_BASE, roadInfos, roadLevelOffset } from "@/lib/heightLimits";
 import { checkSkyFactor, type SkyResult } from "@/lib/skyFactor";
 import { polygonArea, round } from "@/lib/geometry";
 
@@ -16,7 +16,9 @@ type Props = {
 type Row = { item: string; status: "ok" | "ng" | "unknown" | "na"; detail: string };
 
 /** 判定表（確認済み／超過／未確認）を作る。印刷画面でも使う */
-export function verdictRows(project: Project, sky: SkyResult | { error: string } | null): Row[] {
+export type SkyAll = { road: string; result: SkyResult | { error: string } }[];
+
+export function verdictRows(project: Project, skyAll: SkyAll | null): Row[] {
   const r = rulesOf(project);
   const b = project.building;
   const lv = levels(b);
@@ -30,24 +32,40 @@ export function verdictRows(project: Project, sky: SkyResult | { error: string }
   const siteArea = project.site.areaOverride ?? polygonArea(project.site.points);
   const bArea = b.w * b.d;
   const cov = (bArea / siteArea) * 100;
-  rows.push({ item: "建ぺい率", status: cov <= project.site.coverageRatio + 1e-9 ? "ok" : "ng", detail: `${round(cov, 1)}%（上限 ${project.site.coverageRatio}%）建築面積 ${round(bArea, 2)}㎡` });
+  const covLimit = project.site.coverageRatio + (project.site.cornerLot ? 10 : 0);
+  rows.push({ item: "建ぺい率", status: cov <= covLimit + 1e-9 ? "ok" : "ng", detail: `${round(cov, 1)}%（上限 ${covLimit}%${project.site.cornerLot ? "＝指定＋角地10%" : ""}）建築面積 ${round(bArea, 2)}㎡` });
   const total = project.floors.reduce((a, f) => a + f.rooms.filter((x) => x.type !== "balcony").reduce((s, x) => s + x.w * x.d, 0), 0);
   const farUse = (total / siteArea) * 100;
-  rows.push({ item: "容積率", status: total > 0 ? (farUse <= project.site.farRatio + 1e-9 ? "ok" : "ng") : "unknown", detail: total > 0 ? `${round(farUse, 1)}%（上限 ${project.site.farRatio}%）延床 ${round(total, 2)}㎡＝${round(total / TSUBO_M2, 2)}坪。前面道路幅員による低減（法52条2項）は未計算` : "間取りが無いので未計算" });
+  // 法52条2項: 前面道路（2以上あれば最大幅員）が12m未満なら、幅員×0.4（住居系）／0.6（その他）が上限
+  const roads = roadInfos(project);
+  const roadWmax = roads.length ? Math.max(...roads.map((x) => x.width)) : null;
+  const coef = zone ? (zone.residential ? 0.4 : 0.6) : 0.4;
+  const farRoad = roadWmax !== null && roadWmax < 12 ? Math.round(roadWmax * coef * 100) : null;
+  const farLimit = farRoad !== null ? Math.min(project.site.farRatio, farRoad) : project.site.farRatio;
+  rows.push({ item: "容積率の上限", status: roadWmax === null ? "unknown" : zone ? "ok" : "unknown", detail: roadWmax === null ? "道路が未設定" : farRoad !== null ? `前面道路 ${roadWmax}m × ${coef}${zone ? "" : "（用途地域未選択のため住居系の 0.4 で仮計算）"} ＝ ${farRoad}% と指定 ${project.site.farRatio}% の小さい方 → ${farLimit}%（法52条2項）` : `前面道路 ${roadWmax}m は12m以上なので指定 ${project.site.farRatio}% のまま` });
+  rows.push({ item: "容積率", status: total > 0 ? (farUse <= farLimit + 1e-9 ? "ok" : "ng") : "unknown", detail: total > 0 ? `${round(farUse, 1)}%（上限 ${farLimit}%）延床 ${round(total, 2)}㎡＝${round(total / TSUBO_M2, 2)}坪。上限いっぱいなら ${round((siteArea * farLimit) / 100, 2)}㎡ まで` : "間取りが無いので未計算" });
 
-  const road = lims.find((l) => l.key === "road");
-  if (road && road.over > 0) {
-    if (r.skyEnabled && sky && !("error" in sky)) {
-      rows.push({ item: "道路斜線", status: sky.ok ? "ok" : "ng", detail: sky.ok ? `斜線は最大 ${mm(road.over)}mm 超えるが、天空率で適合（全 ${sky.points.length} 点で計画 ≧ 適合）` : `斜線を最大 ${mm(road.over)}mm 超え、天空率でも不適合（最悪 ${round(sky.worst * 100, 2)} ポイント不足）` });
-    } else if (r.skyEnabled && sky && "error" in sky) {
-      rows.push({ item: "道路斜線", status: "ng", detail: `斜線を最大 ${mm(road.over)}mm 超え。天空率は計算できず: ${sky.error}` });
+  const roadLims = lims.filter((l) => l.key.startsWith("road"));
+  const roadOver = Math.max(0, ...roadLims.map((l) => l.over));
+  const skyOkAll = skyAll && skyAll.length > 0 && skyAll.every((x) => !("error" in x.result) && x.result.ok);
+  const skyErr = skyAll?.find((x) => "error" in x.result);
+  if (roadOver > 0) {
+    if (r.skyEnabled && skyAll && !skyErr) {
+      rows.push({ item: "道路斜線", status: skyOkAll ? "ok" : "ng", detail: skyOkAll ? `斜線は最大 ${mm(roadOver)}mm 超えるが、天空率で適合（全道路・全算定位置で計画 ≧ 適合）` : `斜線を最大 ${mm(roadOver)}mm 超え、天空率でも不適合` });
+    } else if (r.skyEnabled && skyErr) {
+      rows.push({ item: "道路斜線", status: "ng", detail: `斜線を最大 ${mm(roadOver)}mm 超え。天空率は計算できず: ${(skyErr.result as { error: string }).error}` });
     } else {
-      rows.push({ item: "道路斜線", status: "ng", detail: `最大 ${mm(road.over)}mm 超え（天空率は未計算）` });
+      rows.push({ item: "道路斜線", status: "ng", detail: `最大 ${mm(roadOver)}mm 超え（天空率は未計算）` });
     }
   } else {
-    rows.push({ item: "道路斜線", status: "ok", detail: `最高高さ ${mm(lv.max)}mm は斜線の内側` });
+    rows.push({ item: "道路斜線", status: "ok", detail: `最高高さ ${mm(lv.max)}mm は斜線の内側${roads.length > 1 ? `（${roads.length} 方向道路、令132条で幅員をみなし）` : ""}${roadLevelOffset(project) !== 0 ? `、高低差 ${project.site.roadLevelDiff}m を考慮` : ""}` });
   }
-  rows.push({ item: "天空率（道路）", status: !r.skyEnabled ? "na" : sky && !("error" in sky) ? (sky.ok ? "ok" : "ng") : "unknown", detail: sky && !("error" in sky) ? `算定位置 ${sky.points.length} 点（間隔 ${round(sky.info.pitch, 2)}m）、最小余裕 ${round(sky.worst * 100, 2)} ポイント。${sky.info.note.join("。")}` : sky && "error" in sky ? sky.error : "未計算" });
+  if (!r.skyEnabled) rows.push({ item: "天空率（道路）", status: "na", detail: "未使用" });
+  else if (!skyAll) rows.push({ item: "天空率（道路）", status: "unknown", detail: "未計算" });
+  else for (const x of skyAll) {
+    const res = x.result;
+    rows.push({ item: `天空率（${x.road}）`, status: "error" in res ? "unknown" : res.ok ? "ok" : "ng", detail: "error" in res ? res.error : `算定位置 ${res.points.length} 点（間隔 ${round(res.info.pitch, 2)}m）、最小余裕 ${round(res.worst * 100, 2)} ポイント。${res.info.note.join("。")}` });
+  }
 
   const nb = lims.filter((l) => l.key.startsWith("nb"));
   if (!r.neighborEnabled) rows.push({ item: "隣地斜線", status: "na", detail: "対象外（低層住専）または未使用" });
@@ -70,12 +88,18 @@ export function verdictRows(project: Project, sky: SkyResult | { error: string }
   return rows;
 }
 
-export function useSky(project: Project) {
+export function useSky(project: Project): SkyAll | null {
   return useMemo(() => {
     const r = rulesOf(project);
     if (!r.skyEnabled) return null;
     const lv = levels(project.building);
-    return checkSkyFactor({ site: project.site, grid: project.grid, building: project.building, slope: r.roadSlope, applyDist: r.roadApplyDist, eave: lv.eave, maxHeight: lv.max });
+    const zOff = roadLevelOffset(project);
+    const roads = roadInfos(project);
+    if (!roads.length) return [{ road: "道路", result: { error: "道路の辺が設定されていません" } }];
+    return roads.map((rd) => ({
+      road: roads.length > 1 ? `${rd.label} ${rd.width}m` : "道路",
+      result: checkSkyFactor({ site: project.site, grid: project.grid, building: project.building, slope: r.roadSlope, applyDist: r.roadApplyDist, eave: lv.eave, maxHeight: lv.max, roadEdgeIndex: rd.edgeIndex, effWidth: rd.effWidth, zOff }),
+    }));
   }, [project]);
 }
 
@@ -173,12 +197,12 @@ export default function HeightCheck({ project, setProject }: Props) {
       </div>
 
       {/* 天空率 */}
-      {r.skyEnabled && sky && (
-        <div className="space-y-1 text-xs">
-          <div className="font-medium">天空率（道路高さ制限・令135条の6〜9 参考計算）</div>
-          {"error" in sky ? (
-            <div className="text-red-600">{sky.error}</div>
-          ) : (
+      {r.skyEnabled && sky && sky.map(({ road, result: skyR }) => (
+        <div key={road} className="space-y-1 text-xs">
+          <div className="font-medium">天空率（{road}・令135条の6〜9 参考計算）</div>
+          {"error" in skyR ? (
+            <div className="text-red-600">{skyR.error}</div>
+          ) : (() => { const sky = skyR; return (
             <>
               <div className="text-[10px] text-slate-500">道路幅 {sky.info.roadW}m、後退 {Math.round(sky.info.back * 1000)}mm、勾配 {sky.info.slope}、適用距離 {sky.info.applyDist}m。算定位置は道路の反対側の境界線（後退分だけ外側）上、間隔 {round(sky.info.pitch, 2)}m。</div>
               <table className="w-full text-[11px]">
@@ -196,12 +220,16 @@ export default function HeightCheck({ project, setProject }: Props) {
               </table>
               <SkyDiagram sky={sky} />
               <div className="text-[10px] leading-relaxed text-slate-500">
-                適合は小数第3位で切り上げ、計画は切り捨てで比較（審査実務の安全側）。2方向道路・道路との高低差・入隅・凹形敷地の厳密扱い・北側／隣地の天空率は未対応。確認申請には確認申請ソフトの天空率図との照合が必要です。
+                適合は小数第3位で切り上げ、計画は切り捨てで比較（審査実務の安全側）。入隅・凹形敷地の厳密扱い・北側／隣地の天空率は未対応。確認申請には確認申請ソフトの天空率図との照合が必要です。
               </div>
             </>
-          )}
+          ); })()}
         </div>
-      )}
+      ))}
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <label className="flex flex-col"><span className="text-[9px] text-slate-400">敷地が道路より高い量 m（令135条の2）</span><input type="number" step="0.1" className="field px-1 py-0.5" value={site.roadLevelDiff ?? 0} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, roadLevelDiff: Number(e.target.value) } }))} /></label>
+        <label className="flex items-center gap-2 self-end"><input type="checkbox" checked={!!site.cornerLot} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, cornerLot: e.target.checked } }))} />角地の建ぺい率緩和（＋10%）</label>
+      </div>
       <p className="text-[10px] text-slate-400">最高高さ {Math.round(lv.max * 1000).toLocaleString()}mm。図の破線は各面の外から見た制限ライン。</p>
     </div>
   );

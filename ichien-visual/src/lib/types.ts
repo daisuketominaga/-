@@ -35,6 +35,10 @@ export type Site = {
   fireproofException: boolean;
   /** 高さ制限のチェック用（値は物件ごとに役所で確認して入力） */
   heightRules?: HeightRules;
+  /** 敷地の地盤面が前面道路より高い量 m（令135条の2 の高低差緩和。1m以上で効く） */
+  roadLevelDiff?: number;
+  /** 角地の建ぺい率緩和（特定行政庁の指定。＋10%） */
+  cornerLot?: boolean;
 };
 
 export type HeightRules = {

@@ -232,3 +232,12 @@ export function northScreenDeg(project: Pick<Project, "site" | "building" | "gri
   const deg = base + project.building.rotDeg + (project.grid?.flip ? 180 : 0);
   return ((deg % 360) + 360) % 360;
 }
+
+
+/** 面を外から見て左端から m の位置（外壁線上）の世界座標。openings.ts の並びと同じ */
+export function facePointWorld(b: Building, face: Face, m: number): Pt {
+  const local = face === "S" ? { x: m, y: 0 } : face === "N" ? { x: b.w - m, y: b.d } : face === "W" ? { x: 0, y: b.d - m } : { x: b.w, y: m };
+  const r = (b.rotDeg * Math.PI) / 180;
+  const cos = Math.cos(r), sin = Math.sin(r);
+  return { x: b.x + local.x * cos - local.y * sin, y: b.y + local.x * sin + local.y * cos };
+}

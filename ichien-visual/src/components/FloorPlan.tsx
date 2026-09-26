@@ -6,6 +6,7 @@ import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAUL
 import { round, northScreenDeg } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { siteInBuildingFrame, type SiteContext } from "@/lib/grid";
+import FixtureSchedule from "./FixtureSchedule";
 
 type Props = {
   project: Project;
@@ -640,6 +641,11 @@ export default function FloorPlan({ project, setProject }: Props) {
             <NorthMark x={W - 30} y={oy - 10} deg={northScreenDeg(project, "plan")} />
           </svg>
         </div>
+
+        <details className="card">
+          <summary className="cursor-pointer text-sm font-semibold">建具表（見積・図面指示用）</summary>
+          <div className="mt-2"><FixtureSchedule project={project} /></div>
+        </details>
 
         <div className="hidden">
           <AllFloorsSvg ref={allRef} project={project} summary={summary} total={total} floorArea={floorArea} balconyArea={balconyArea} />

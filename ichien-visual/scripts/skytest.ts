@@ -19,6 +19,8 @@ run("2F 陸屋根 低め", { floors: 2, roof: "flat" });
 run("1F", { floors: 1, roof: "flat" });
 run("4F 陸屋根", { floors: 4, roof: "flat", floorHeights: [2.4, 2.4, 2.4, 2.4] });
 run("3F 勾配1.5", {}, 1.5);
+// 高低差緩和: 敷地が道路より 2m 高い → 起点 −1.5m
+{ const l2 = levels(p.building); const r2 = checkSkyFactor({ site: p.site, grid: p.grid, building: p.building, slope: 1.25, applyDist: 20, eave: l2.eave, maxHeight: l2.max, zOff: -1.5 }); if (!("error" in r2)) console.log("高低差2m", "ok=", r2.ok, "worst=", r2.worst.toFixed(4)); }
 // 精度チェック: 分割数を変えても結果が安定するか
 const l = levels(p.building);
 const a = checkSkyFactor({ site: p.site, grid: p.grid, building: p.building, slope: 1.25, applyDist: 20, eave: l.eave, maxHeight: l.max, nAz: 360, nAlt: 90 });

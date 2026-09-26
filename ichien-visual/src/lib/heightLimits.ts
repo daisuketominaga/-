@@ -5,7 +5,8 @@
 import type { Project, Face, HeightRules, Building } from "./types";
 import { DEFAULT_HEIGHT_RULES } from "./types";
 import { clearances } from "./grid";
-import { faceLength, faceNormalWorld, roofRise } from "./geometry";
+import { faceLength, faceNormalWorld, roofRise, facePointWorld, buildingCorners } from "./geometry";
+import { baseFrame, toLocal } from "./grid";
 import { KODO_PRESETS, ZONE_PRESETS } from "./heightPresets";
 
 export const FACE_BASE: Record<Face, string> = { S: "底辺側", N: "奥側", W: "左側", E: "右側" };
@@ -77,6 +78,66 @@ export function northFaceOf(project: Project): Face {
   return faces[dots.indexOf(Math.max(...dots))];
 }
 
+export type RoadInfo = {
+  edgeIndex: number;
+  width: number;
+  /** 令132条で幅員最大の道路と同じ幅員とみなした後の幅 */
+  effWidth: number;
+  /** 建物の道路境界からの後退距離 */
+  back: number;
+  label: string;
+  /** 建物のどの面が主にこの道路を向くか */
+  face: Face;
+};
+
+/**
+ * 前面道路ごとの情報。2以上の道路がある場合は令132条の考え方で、
+ * 建物が「幅員最大の道路の境界線から幅員の2倍（35m以内）かつ他の道路の中心線から10m以内」の
+ * 区域にあるとき、他の道路も幅員最大の道路と同じ幅員とみなす（戸建規模の敷地ではほぼ常に該当）。
+ */
+export function roadInfos(project: Project): RoadInfo[] {
+  const { site, building: b } = project;
+  const roads = site.edges.filter((e) => e.road && e.index < site.points.length);
+  if (!roads.length) return [];
+  const corners = buildingCorners(b);
+  const maxW = Math.max(...roads.map((e) => e.roadWidth ?? 4));
+  const maxRoad = roads.find((e) => (e.roadWidth ?? 4) === maxW)!;
+  const fMax = baseFrame(site, maxRoad.index);
+  const distFromMax = Math.max(...corners.map((c) => toLocal(fMax, c).y)); // 建物の最も遠い部分
+  const within2A = distFromMax <= Math.min(2 * maxW, 35) + 1e-9;
+  return roads.map((e) => {
+    const f = baseFrame(site, e.index);
+    const w = e.roadWidth ?? 4;
+    const vs = corners.map((c) => toLocal(f, c).y);
+    const back = Math.max(0, Math.min(...vs));
+    // 他の道路の中心線からの距離 = v + w/2 が 10m 以内か
+    const within10 = Math.max(...vs) + w / 2 <= 10 + 1e-9;
+    const effWidth = e.index === maxRoad.index ? w : within2A && within10 ? maxW : w;
+    // この道路に最も向いている面
+    const a = site.points[e.index];
+    const c2 = site.points[(e.index + 1) % site.points.length];
+    const cx = corners.reduce((s2, p) => s2 + p.x, 0) / 4;
+    const cy = corners.reduce((s2, p) => s2 + p.y, 0) / 4;
+    const d = { x: (a.x + c2.x) / 2 - cx, y: (a.y + c2.y) / 2 - cy };
+    let best: Face = "S";
+    let bestDot = -Infinity;
+    for (const fc of ["N", "S", "E", "W"] as Face[]) {
+      const n = faceNormalWorld(b, fc);
+      const dot = n.x * d.x + n.y * d.y;
+      if (dot > bestDot) { bestDot = dot; best = fc; }
+    }
+    return { edgeIndex: e.index, width: w, effWidth, back, label: e.roadLabel ?? "道路", face: best };
+  });
+}
+
+/** 令135条の2: 敷地が道路より 1m 以上高いときは、道路面が (h−1)/2 だけ高い位置にあるとみなす。
+ *  敷地の地盤面から見た斜線の起点の高さ（負の値 = 地盤面より下）を返す */
+export function roadLevelOffset(project: Project): number {
+  const h = project.site.roadLevelDiff ?? 0;
+  if (h < 1) return -h; // 1m 未満は緩和なし。道路面は h だけ低い
+  return -(h - (h - 1) / 2);
+}
+
 export function heightLimits(project: Project, face: Face): LimitLine[] {
   const { site, building: b, grid } = project;
   const r = rulesOf(project);
@@ -87,14 +148,31 @@ export function heightLimits(project: Project, face: Face): LimitLine[] {
   const len = faceLength(b, face);
   const gapTo: Record<Face, number | null> = { S: cl.bottom, N: cl.top, W: cl.left, E: cl.right };
 
-  // 道路斜線（底辺側 S が道路）
-  const back = cl.bottom ?? 0;
-  const roadLimit = (dist: number) => (roadW + back + dist > r.roadApplyDist ? null : r.roadSlope * (roadW + back + dist));
-  if (face === "W" || face === "E") {
-    out.push({ key: "road", name: "道路斜線", color: "#c0392b", hAt: (m) => roadLimit(face === "W" ? b.d - m + back : m + back), note: `勾配 ${r.roadSlope}、道路幅 ${roadW}m、後退 ${Math.round(back * 1000)}mm、適用距離 ${r.roadApplyDist}m` });
-  } else {
-    const dist = face === "S" ? back : back + b.d;
-    out.push({ key: "road", name: "道路斜線", color: "#c0392b", hAt: () => roadLimit(dist), note: `この面の位置での上限（勾配 ${r.roadSlope}）` });
+  // 道路斜線: 前面道路ごとに、面の各点から道路境界までの距離で計算（2方向道路は令132条の幅員、高低差は令135条の2）
+  const roads = roadInfos(project);
+  const zOff = roadLevelOffset(project); // 道路面（みなし）の高さ。地盤面基準で負
+  const back0 = cl.bottom ?? 0;
+  if (!roads.length) {
+    const roadLimit = (dist: number) => (roadW + back0 + dist > r.roadApplyDist ? null : r.roadSlope * (roadW + back0 + dist));
+    const dist = face === "S" ? back0 : face === "N" ? back0 + b.d : 0;
+    out.push({ key: "road", name: "道路斜線", color: "#c0392b", hAt: (m) => roadLimit(face === "W" ? b.d - m + back0 : face === "E" ? m + back0 : dist), note: `勾配 ${r.roadSlope}、道路幅 ${roadW}m` });
+  }
+  for (const rd of roads) {
+    const f = baseFrame(site, rd.edgeIndex);
+    const key = roads.length > 1 ? `road${rd.edgeIndex}` : "road";
+    const name = roads.length > 1 ? `道路斜線(${rd.label} ${rd.effWidth}m)` : "道路斜線";
+    out.push({
+      key,
+      name,
+      color: "#c0392b",
+      hAt: (m) => {
+        const v = Math.max(0, toLocal(f, facePointWorld(b, face, m)).y);
+        const D = rd.effWidth + rd.back + v;
+        if (D > r.roadApplyDist) return null;
+        return r.roadSlope * D + zOff;
+      },
+      note: `勾配 ${r.roadSlope}、幅員 ${rd.width}m${rd.effWidth !== rd.width ? `→令132条で ${rd.effWidth}m とみなす` : ""}、後退 ${Math.round(rd.back * 1000)}mm、適用距離 ${r.roadApplyDist}m${zOff !== 0 ? `、高低差緩和 起点 ${zOff.toFixed(2)}m` : ""}`,
+    });
   }
 
   // 隣地斜線: 道路以外の3面。その面の境界までの距離 + 面から奥への距離

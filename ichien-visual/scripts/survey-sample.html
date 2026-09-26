@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>地積測量図（テスト用の擬似図面）</title>
+<style>
+  body { margin: 0; background: #fff; font-family: "Noto Sans JP", "Hiragino Sans", sans-serif; color: #111; }
+  .sheet { width: 1400px; height: 990px; position: relative; border: 2px solid #000; box-sizing: border-box; }
+  .title { position: absolute; top: 18px; left: 40px; font-size: 26px; font-weight: 700; letter-spacing: 6px; }
+  .meta { position: absolute; top: 60px; left: 40px; font-size: 14px; line-height: 1.7; }
+  table { border-collapse: collapse; font-size: 14px; }
+  td, th { border: 1px solid #000; padding: 3px 10px; text-align: right; }
+  th { background: #f2f2f2; }
+  .tbl { position: absolute; right: 40px; top: 60px; }
+  .tbl h3 { margin: 0 0 4px; font-size: 15px; }
+  .north { position: absolute; right: 60px; top: 460px; text-align: center; font-size: 14px; }
+  .note { position: absolute; left: 40px; bottom: 20px; font-size: 13px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="title">地 積 測 量 図</div>
+  <div class="meta">
+    所在　藤沢市鵠沼松が岡四丁目<br />
+    地番　１２３４番５６<br />
+    地目　宅地　　地積　79.43 ㎡<br />
+    縮尺　1/250　　平面直角座標系（第Ⅸ系）
+  </div>
+
+  <svg width="820" height="640" viewBox="-40 -40 820 640" style="position:absolute; left:100px; top:180px">
+    <!-- 座標 K1..K6 を 1m=60px で描く（Y=東→右, X=北→上） -->
+    <g transform="translate(60 560) scale(60 -60)" stroke="#000" stroke-width="0.04" fill="none">
+      <polygon points="0.3,9.19 8.7,9.19 8.7,0 0.56,0 0,1.2 0.284,8.77" fill="#f7f1e3" stroke-width="0.05" />
+      <!-- 道路（西側） -->
+      <polygon points="-4.2,-1 0.4,-1 0.55,10.5 -4.2,10.5" fill="#ececec" stroke="#888" stroke-width="0.02" />
+      <polygon points="0.3,9.19 8.7,9.19 8.7,0 0.56,0 0,1.2 0.284,8.77" fill="none" stroke-width="0.05" />
+    </g>
+    <g font-size="15" font-family="sans-serif">
+      <text x="60" y="-8">K1</text>
+      <text x="570" y="-8">K12</text>
+      <text x="575" y="575">K11</text>
+      <text x="80" y="580">K10</text>
+      <text x="20" y="500">K9</text>
+      <text x="30" y="30">K7</text>
+      <text x="300" y="-12" font-size="16" text-anchor="middle">8.40</text>
+      <text x="600" y="290" font-size="16">9.19</text>
+      <text x="330" y="590" font-size="16" text-anchor="middle">8.14</text>
+      <text x="-2" y="300" font-size="16" text-anchor="end">7.63</text>
+      <text x="30" y="555" font-size="14">1.35</text>
+      <text x="30" y="52" font-size="14">0.42</text>
+      <text x="-150" y="300" font-size="16" transform="rotate(-90 -150 300)">道路（公道）幅員 4.0m</text>
+      <text x="-40" y="120" font-size="13">NTT柱</text>
+    </g>
+  </svg>
+
+  <div class="tbl">
+    <h3>求　積　表</h3>
+    <table>
+      <tr><th>点名</th><th>X座標</th><th>Y座標</th><th>辺長</th></tr>
+      <tr><td>K1</td><td>-64,410.190</td><td>-27,555.700</td><td>8.400</td></tr>
+      <tr><td>K12</td><td>-64,410.190</td><td>-27,547.300</td><td>9.190</td></tr>
+      <tr><td>K11</td><td>-64,419.380</td><td>-27,547.300</td><td>8.140</td></tr>
+      <tr><td>K10</td><td>-64,419.380</td><td>-27,555.440</td><td>1.350</td></tr>
+      <tr><td>K9</td><td>-64,418.180</td><td>-27,556.000</td><td>7.630</td></tr>
+      <tr><td>K7</td><td>-64,410.610</td><td>-27,555.716</td><td>0.420</td></tr>
+      <tr><td colspan="3">倍面積</td><td>158.84</td></tr>
+      <tr><td colspan="3">地積</td><td>79.43 ㎡</td></tr>
+    </table>
+  </div>
+
+  <div class="north">
+    <svg width="60" height="80" viewBox="0 0 60 80"><polygon points="30,5 42,55 30,45 18,55" fill="#000" /><text x="30" y="75" text-anchor="middle" font-size="16">N</text></svg>
+  </div>
+
+  <div class="note">
+    ※ このファイルは読み取り機能のテスト用に作った擬似図面です（実在の測量図ではありません）。<br />
+    作成者　テスト　　作成年月日　2026年9月26日
+  </div>
+</div>
+</body>
+</html>

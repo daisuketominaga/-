@@ -9,6 +9,7 @@ import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
 import { AllElevationsSvg, elevationTitle } from "./Elevation";
 import { verdictRows, useSky } from "./HeightCheck";
+import FixtureSchedule from "./FixtureSchedule";
 
 type Props = {
   project: Project;
@@ -83,6 +84,11 @@ export default function PrintView({ project, setProject }: Props) {
         <div className="w-full overflow-auto [&>svg]:h-auto [&>svg]:w-full">
           <AllElevationsSvg ref={elevRef} project={project} title={elevationTitle(project)} roadFace={roadFaceOf(project.site, b)} />
         </div>
+      </section>
+
+      <section className="print-page card">
+        <h2 className="mb-2 text-lg font-bold">{project.name}　建具表</h2>
+        <FixtureSchedule project={project} compact />
       </section>
 
       <section className="print-page card">

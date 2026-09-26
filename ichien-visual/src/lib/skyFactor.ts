@@ -148,6 +148,11 @@ export type SkyInput = {
   /** 分割数（精度）。既定 720×180 */
   nAz?: number;
   nAlt?: number;
+  /** 対象の道路の辺（未指定なら最初の道路）と、令132条でみなした幅員 */
+  roadEdgeIndex?: number;
+  effWidth?: number;
+  /** 令135条の2 の高低差緩和: 算定位置（道路面とみなす高さ）の地盤面からの高さ（負） */
+  zOff?: number;
 };
 
 /**
@@ -156,12 +161,13 @@ export type SkyInput = {
  */
 export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
   const { site, grid, building: b, slope, applyDist } = inp;
-  const roadEdge = site.edges.find((e) => e.road);
+  const roadEdge = inp.roadEdgeIndex !== undefined ? site.edges.find((e) => e.index === inp.roadEdgeIndex) : site.edges.find((e) => e.road);
   if (!roadEdge) return { error: "道路の辺が設定されていません" };
-  const roads = site.edges.filter((e) => e.road);
   const note: string[] = [];
-  if (roads.length > 1) note.push("道路が2つ以上ありますが、最初の1本だけで計算しています");
-  const roadW = roadEdge.roadWidth ?? 4;
+  const roadW = inp.effWidth ?? roadEdge.roadWidth ?? 4;
+  if (inp.effWidth !== undefined && inp.effWidth !== (roadEdge.roadWidth ?? 4)) note.push(`令132条により幅員 ${inp.effWidth}m とみなして計算`);
+  const zOff = inp.zOff ?? 0;
+  if (zOff !== 0) note.push(`高低差緩和: 算定位置の高さ ${zOff.toFixed(2)}m`);
   const rf: Frame = baseFrame(site, roadEdge.index);
 
   // 建物の4隅（世界座標 → 道路座標）
@@ -209,7 +215,7 @@ export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
   const rectR = cornersR;
   const addPlan = (poly: Pt[]) => {
     const clipped = clipHalf(poly, { x: 0, y: -1 }, -vMax);
-    if (clipped.length >= 3) planPrisms.push({ poly: clipped, top: (u, v) => { const p = toBuilding(u, v); return topLocal(p.x, p.y); }, zmax: inp.maxHeight });
+    if (clipped.length >= 3) planPrisms.push({ poly: clipped, top: (u, v) => { const p = toBuilding(u, v); return topLocal(p.x, p.y) - zOff; }, zmax: inp.maxHeight - zOff });
   };
   if (b.roof === "gable") {
     // 屋根面が2枚なので、棟で2つの立体に分ける（それぞれ上面が平面）
