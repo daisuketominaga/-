@@ -38,32 +38,50 @@ export type Site = {
 };
 
 export type HeightRules = {
-  /** 道路斜線の勾配（住居系 1.25 / その他 1.5） */
+  /** 用途地域（heightPresets の ZONE_PRESETS の id）。道路斜線の勾配・適用距離・北側斜線・隣地斜線を決める */
+  zoneId: string;
+  /** 道路斜線の勾配（住居系 1.25 / その他 1.5）。用途地域から自動、手で上書き可 */
   roadSlope: number;
-  /** 道路斜線の適用距離 m（容積率と用途地域で決まる） */
+  /** 道路斜線の適用距離 m */
   roadApplyDist: number;
-  /** 北側斜線を使う（第一種・第二種低層住居専用地域 5m＋1.25、中高層 10m＋1.25） */
+  /** 北側斜線（低層住専 5m＋1.25、中高層住専 10m＋1.25） */
   northEnabled: boolean;
   northBase: number;
   northSlope: number;
-  /** 高度地区（自治体ごと。無ければオフ） */
+  /** 隣地斜線（住居系 20m＋1.25、その他 31m＋2.5） */
+  neighborEnabled: boolean;
+  neighborBase: number;
+  neighborSlope: number;
+  /** 高度地区: プリセット id（"" なら手入力）と区間式 */
   kodoEnabled: boolean;
-  kodoBase: number;
-  kodoSlope: number;
-  /** 絶対高さ制限 m（低層住居専用地域の 10m/12m など。0 なら無し） */
+  kodoPresetId: string;
+  kodoSegs: { from: number; upTo: number | null; base: number; slope: number }[];
+  kodoAbsolute: number;
+  /** 絶対高さ制限 m（低層住専の 10m/12m など。0 なら無し） */
   absoluteMax: number;
+  /** 天空率で道路斜線を検討する */
+  skyEnabled: boolean;
+  /** 旧形式との互換用（使わない） */
+  kodoBase?: number;
+  kodoSlope?: number;
 };
 
 export const DEFAULT_HEIGHT_RULES: HeightRules = {
+  zoneId: "",
   roadSlope: 1.25,
   roadApplyDist: 20,
   northEnabled: false,
   northBase: 5,
   northSlope: 1.25,
+  neighborEnabled: true,
+  neighborBase: 20,
+  neighborSlope: 1.25,
   kodoEnabled: false,
-  kodoBase: 5,
-  kodoSlope: 0.6,
+  kodoPresetId: "",
+  kodoSegs: [],
+  kodoAbsolute: 0,
   absoluteMax: 0,
+  skyEnabled: true,
 };
 
 export type RoofType = "flat" | "shed" | "gable";

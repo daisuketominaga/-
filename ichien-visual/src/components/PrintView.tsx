@@ -8,6 +8,7 @@ import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
 import { AllElevationsSvg, elevationTitle } from "./Elevation";
+import { verdictRows, useSky } from "./HeightCheck";
 
 type Props = {
   project: Project;
@@ -27,6 +28,8 @@ export default function PrintView({ project, setProject }: Props) {
   const extras = Array.from(new Set(project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "study" || r.type === "garage").map((r) => r.name)));
   const summary = `${bedrooms}${hasLdk ? "LDK" : "K"}${extras.length ? "＋" + extras.join("＋") : ""}`;
   const siteArea = project.site.areaOverride ?? 0;
+  const sky = useSky(project);
+  const rows = verdictRows(project, sky);
 
   return (
     <div className="space-y-4">
@@ -80,6 +83,22 @@ export default function PrintView({ project, setProject }: Props) {
         <div className="w-full overflow-auto [&>svg]:h-auto [&>svg]:w-full">
           <AllElevationsSvg ref={elevRef} project={project} title={elevationTitle(project)} roadFace={roadFaceOf(project.site, b)} />
         </div>
+      </section>
+
+      <section className="print-page card">
+        <h2 className="mb-2 text-lg font-bold">{project.name}　法規チェック（参考）</h2>
+        <table className="w-full text-xs">
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.item} className="border-b border-dashed border-slate-200 align-top">
+                <td className="py-1 pr-2 whitespace-nowrap font-medium">{row.item}</td>
+                <td className="py-1 pr-2 whitespace-nowrap">{row.status === "ok" ? "確認済み" : row.status === "ng" ? "超過" : row.status === "na" ? "対象外" : "未確認"}</td>
+                <td className="py-1 text-slate-600">{row.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-2 text-[11px] text-slate-500">※このチェックは参考です。用途地域・高度地区・日影規制などの値は役所または確認検査機関で確認した数値で判断してください。天空率は確認申請ソフトとの照合が必要です。</p>
       </section>
 
       <p className="text-[11px] text-slate-400 print:block">

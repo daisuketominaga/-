@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Project, Face, Opening, Building, HeightRules } from "@/lib/types";
-import { DEFAULT_HEIGHT_RULES } from "@/lib/types";
-import { clearances } from "@/lib/grid";
-import { faceLength, roofRise, round, faceCompass, roadFaceOf, faceNormalWorld } from "@/lib/geometry";
+import type { Project, Face, Opening, Building } from "@/lib/types";
+import { heightLimits, levels } from "@/lib/heightLimits";
+import HeightCheck from "./HeightCheck";
+import { faceLength, roofRise, round, faceCompass, roadFaceOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { derivedOpenings } from "@/lib/openings";
 
@@ -24,93 +24,7 @@ export function elevationTitle(project: Project) {
 function faceTitle(project: Project, face: Face) {
   return `${FACE_BASE[face]}立面図（${faceCompass(project.building, face, project.site.northDeg)}）`;
 }
-const SLAB = 0.4;
-
-/** 各階の床レベル（GLからの高さ）と最高高さ */
-export function levels(b: Building) {
-  const fl: number[] = [];
-  let h = b.foundation + 0.1; // 1FL は基礎天端＋土台程度
-  for (let i = 0; i < b.floors; i++) {
-    fl.push(h);
-    h += b.floorHeights[i] ?? 2.3;
-    if (i < b.floors - 1) h += SLAB;
-  }
-  const eave = h + 0.25; // 軒高（最上階天井＋小屋部分）
-  const rise = roofRise(b);
-  return { fl, eave, max: eave + rise + (b.roof === "flat" ? 0.15 : 0.16) };
-}
-
-/**
- * 高さ制限の目安。建物座標で「底辺側(S)が道路」を前提に、各面の外側から見た
- * 斜線を「面の左端0 → 右端len」の高さ関数として返す（GLからの高さ m）。
- * 数値はすべて参考。役所・確認検査機関で確認すること。
- */
-export type LimitLine = { name: string; color: string; hAt: (m: number) => number | null; note: string };
-export function heightLimits(project: Project, face: Face): LimitLine[] {
-  const { site, building: b, grid } = project;
-  const r: HeightRules = site.heightRules ?? DEFAULT_HEIGHT_RULES;
-  const roadEdge = site.edges.find((e) => e.road);
-  const roadW = roadEdge?.roadWidth ?? 4;
-  const cl = clearances(site, grid, b.w, b.d);
-  const out: LimitLine[] = [];
-  const len = faceLength(b, face);
-  // 道路斜線: 底辺側(S)から奥へ。後退距離 = 道路境界から建物までの距離（56条2項の緩和）
-  const back = cl.bottom ?? 0;
-  // 適用距離は道路の反対側の境界線（後退緩和ぶん外側）から測る
-  const roadLimit = (dist: number) => (roadW + back + dist > r.roadApplyDist ? null : r.roadSlope * (roadW + back + dist));
-  if (face === "W" || face === "E") {
-    // 左側面を外から見ると左が奥(y=d)、右が底辺。右側面は逆
-    out.push({ name: "道路斜線", color: "#c0392b", hAt: (m) => roadLimit(face === "W" ? b.d - m + back : m + back), note: `勾配 ${r.roadSlope}、道路幅 ${roadW}m、後退 ${Math.round(back * 1000)}mm、適用距離 ${r.roadApplyDist}m` });
-  } else {
-    // 道路側/奥側の面は、その面での高さが一定
-    const dist = face === "S" ? back : back + b.d;
-    out.push({ name: "道路斜線", color: "#c0392b", hAt: () => roadLimit(dist), note: `この面の位置での上限（勾配 ${r.roadSlope}）` });
-  }
-  // 北側斜線・高度地区: 真北方向へ最も向いている面が「北側の面」。その面から南へ下がる
-  const nd = (site.northDeg * Math.PI) / 180;
-  const north = { x: Math.sin(nd), y: Math.cos(nd) };
-  const faces: Face[] = ["N", "S", "E", "W"];
-  const dots = faces.map((f) => { const n = faceNormalWorld(b, f); return n.x * north.x + n.y * north.y; });
-  const northFace = faces[dots.indexOf(Math.max(...dots))];
-  const gapTo: Record<Face, number | null> = { S: cl.bottom, N: cl.top, W: cl.left, E: cl.right };
-  const gap = gapTo[northFace] ?? 0;
-  const depthAlong = northFace === "N" || northFace === "S" ? b.d : b.w;
-  const mk = (name: string, color: string, base: number, slope: number, note: string) => {
-    const lim = (d: number) => base + slope * (gap + d); // d = 北側の面からの距離
-    if (face === northFace) out.push({ name, color, hAt: () => lim(0), note });
-    else if (SIDES_FACE[face].includes(northFace)) {
-      const northOnLeft = SIDES_FACE[face][0] === northFace;
-      out.push({ name, color, hAt: (m) => lim(northOnLeft ? m : len - m), note });
-    } else out.push({ name, color, hAt: () => lim(depthAlong), note });
-  };
-  if (r.northEnabled) mk("北側斜線", "#1d6fb8", r.northBase, r.northSlope, `起点 ${r.northBase}m ＋ 勾配 ${r.northSlope}（北側の面＝${FACE_BASE[northFace]}）`);
-  if (r.kodoEnabled) mk("高度地区", "#7c3aed", r.kodoBase, r.kodoSlope, `起点 ${r.kodoBase}m ＋ 勾配 ${r.kodoSlope}（北側の面＝${FACE_BASE[northFace]}）`);
-  if (r.absoluteMax > 0) out.push({ name: "絶対高さ", color: "#b45309", hAt: () => r.absoluteMax, note: `${r.absoluteMax}m` });
-  return out;
-}
-
-/** 建物の輪郭（面の左端からの位置ごとの高さ）が制限を超えていないか */
-export function checkLimits(project: Project): { name: string; face: Face; over: number }[] {
-  const b = project.building;
-  const lv = levels(b);
-  const res: { name: string; face: Face; over: number }[] = [];
-  for (const face of ["S", "N", "W", "E"] as Face[]) {
-    const len = faceLength(b, face);
-    for (const lim of heightLimits(project, face)) {
-      let worst = 0;
-      for (let i = 0; i <= 20; i++) {
-        const m = (len * i) / 20;
-        const h = lim.hAt(m);
-        if (h === null) continue;
-        // 建物の高さは最高高さで代表（片流れの低い側は緩く見るが安全側として最高高さ）
-        const over = lv.max - h;
-        if (over > worst) worst = over;
-      }
-      if (worst > 0.001) res.push({ name: lim.name, face, over: worst });
-    }
-  }
-  return res;
-}
+export { levels };
 
 export default function Elevation({ project, setProject }: Props) {
   const { building: b, openings, site } = project;
@@ -181,43 +95,7 @@ export default function Elevation({ project, setProject }: Props) {
           </div>
         </div>
 
-        <div className="card space-y-2">
-          <h3 className="text-sm font-semibold">高さ制限チェック（参考）</h3>
-          {(() => {
-            const r: HeightRules = site.heightRules ?? DEFAULT_HEIGHT_RULES;
-            const setR = (patch: Partial<HeightRules>) => setProject((p) => ({ ...p, site: { ...p.site, heightRules: { ...(p.site.heightRules ?? DEFAULT_HEIGHT_RULES), ...patch } } }));
-            const probs = checkLimits(project);
-            return (
-              <>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="label">道路斜線 勾配</span>
-                    <select className="field" value={r.roadSlope} onChange={(e) => setR({ roadSlope: Number(e.target.value) })}>
-                      <option value={1.25}>1.25（住居系）</option>
-                      <option value={1.5}>1.5（商業・工業系）</option>
-                    </select>
-                  </div>
-                  <Num label="道路斜線 適用距離 m" v={r.roadApplyDist} step={5} onChange={(v) => setR({ roadApplyDist: v })} />
-                  <label className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={r.northEnabled} onChange={(e) => setR({ northEnabled: e.target.checked })} />北側斜線（低層・中高層住居専用地域）</label>
-                  {r.northEnabled && (<><Num label="起点の高さ m" v={r.northBase} step={1} onChange={(v) => setR({ northBase: v })} /><Num label="勾配" v={r.northSlope} step={0.05} onChange={(v) => setR({ northSlope: v })} /></>)}
-                  <label className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={r.kodoEnabled} onChange={(e) => setR({ kodoEnabled: e.target.checked })} />高度地区（自治体の指定がある場合）</label>
-                  {r.kodoEnabled && (<><Num label="起点の高さ m" v={r.kodoBase} step={1} onChange={(v) => setR({ kodoBase: v })} /><Num label="勾配" v={r.kodoSlope} step={0.05} onChange={(v) => setR({ kodoSlope: v })} /></>)}
-                  <Num label="絶対高さ m（0=無し）" v={r.absoluteMax} step={1} onChange={(v) => setR({ absoluteMax: v })} />
-                </div>
-                {probs.length === 0 ? (
-                  <div className="rounded bg-emerald-50 p-2 text-xs text-emerald-800">✓ 入力した制限の範囲では最高高さ {Math.round(levels(b).max * 1000).toLocaleString()}mm は収まっています</div>
-                ) : (
-                  <div className="rounded bg-red-50 p-2 text-xs text-red-700">
-                    {probs.map((p, i) => <div key={i}>⚠ {p.name}（{FACE_BASE[p.face]}）を最大 {Math.round(p.over * 1000).toLocaleString()}mm 超えています</div>)}
-                  </div>
-                )}
-                <p className="text-[10px] leading-relaxed text-slate-500">
-                  底辺側を道路、道路境界から建物までの距離を後退距離として計算（建築基準法56条2項の緩和相当）。日影規制・天空率・2方道路・高低差は未対応。勾配や適用距離は用途地域・容積率・自治体で変わるので、必ず役所か確認検査機関で確認した値を入力してください。図の破線は各面の外から見た制限ラインです。
-                </p>
-              </>
-            );
-          })()}
-        </div>
+        <HeightCheck project={project} setProject={setProject} />
 
         <div className="card space-y-2">
           <div className="flex items-center justify-between">
