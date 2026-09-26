@@ -52,7 +52,7 @@ export async function readSurvey(image: { b64: string; mediaType: "image/jpeg" |
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    max_tokens: 6000,
     system: SYSTEM,
     messages: [
       {
@@ -65,16 +65,24 @@ export async function readSurvey(image: { b64: string; mediaType: "image/jpeg" |
     ],
   });
   const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-  const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-  if (!Array.isArray(json.points) || json.points.length < 3) throw new Error("境界点が読み取れませんでした");
-  const minX = Math.min(...json.points.map((p: { x: number }) => p.x));
-  const minY = Math.min(...json.points.map((p: { y: number }) => p.y));
-  const points = json.points.map((p: { x: number; y: number }) => ({ x: +(p.x - minX).toFixed(2), y: +(p.y - minY).toFixed(2) }));
+  let json: Record<string, unknown>;
+  try {
+    // ```json フェンスや前置きがあっても、最初の { から最後の } までを取る
+    const body = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+    json = JSON.parse(body);
+  } catch {
+    throw new Error(`JSONとして読めませんでした（stop=${msg.stop_reason}, 文字数=${text.length}）: ${text.slice(0, 400)}`);
+  }
+  const rawPoints = json.points as { x: number; y: number }[] | undefined;
+  if (!Array.isArray(rawPoints) || rawPoints.length < 3) throw new Error("境界点が読み取れませんでした");
+  const minX = Math.min(...rawPoints.map((p) => p.x));
+  const minY = Math.min(...rawPoints.map((p) => p.y));
+  const points = rawPoints.map((p) => ({ x: +(p.x - minX).toFixed(2), y: +(p.y - minY).toFixed(2) }));
   const coordSystem = typeof json.coordSystem === "string" ? json.coordSystem : null;
-  const notes = [json.notes, coordSystem && coordSystem.includes("任意") ? `【注意】任意座標系のため、座標の上＝北ではありません。敷地図の「方位」で測量図の方位記号に合わせて向きを設定してください。${json.northHint ? "（" + json.northHint + "）" : ""}` : null].filter(Boolean).join(" ");
+  const notes = [typeof json.notes === "string" ? json.notes : null, coordSystem && coordSystem.includes("任意") ? `【注意】任意座標系のため、座標の上＝北ではありません。敷地図の「方位」で測量図の方位記号に合わせて向きを設定してください。${typeof json.northHint === "string" ? "（" + json.northHint + "）" : ""}` : null].filter(Boolean).join(" ");
   return {
     site: { points, edges: Array.isArray(json.edges) ? json.edges : [], northDeg: 0, areaOverride: typeof json.areaOverride === "number" ? json.areaOverride : undefined },
-    coords: json.coords ?? null,
+    coords: Array.isArray(json.coords) ? (json.coords as { label: string; X: number; Y: number }[]) : null,
     coordSystem,
     notes,
     usage: msg.usage,
