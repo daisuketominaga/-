@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "./types";
 import { sampleProject, emptyProject, lessonProject1, lessonProject2, lessonProject3 } from "./sample";
+import { queueCloudUpsert, cloudList, cloudUpsert, cloudDelete, cloudSession } from "./cloud";
 
 const LEGACY_KEY = "ichien-visual-project-v1";
 const INDEX_KEY = "ichien-visual-projects-v1";
@@ -101,6 +102,7 @@ export function useProject() {
     const newList = exists ? ix.list.map((m) => (m.id === id ? meta : m)) : [...ix.list, meta];
     writeIndex({ currentId: id, list: newList });
     setList(newList);
+    queueCloudUpsert(id, next);
   }, []);
 
   const setProject = useCallback(
@@ -156,6 +158,9 @@ export function useProject() {
       const nextId = id === ix.currentId ? newList[0].id : ix.currentId;
       writeIndex({ currentId: nextId, list: newList });
       setList(newList);
+      cloudSession().then((s) => {
+        if (s) cloudDelete(id, s.user.email ?? null).catch(() => {});
+      });
       if (id === currentId) {
         const p = readProject(nextId);
         setCurrentId(nextId);
@@ -165,7 +170,75 @@ export function useProject() {
     [currentId]
   );
 
-  return { project, setProject, replaceProject, list, currentId, switchTo, createProject, deleteProject };
+  /**
+   * クラウドと同期する。新しい方（updatedAt が後）を採用し、片方にしか無いものは相手に送る。
+   * クラウドで削除済み（deleted_at あり）のものは、ローカルの更新がそれより古ければローカルからも消す。
+   */
+  const cloudSync = useCallback(async (): Promise<{ pulled: number; pushed: number; removed: number }> => {
+    const s = await cloudSession();
+    if (!s) throw new Error("ログインしていません");
+    const email = s.user.email ?? null;
+    const rows = await cloudList();
+    const ix = readIndex() ?? { currentId: "", list: [] };
+    let list = [...ix.list];
+    let pulled = 0,
+      pushed = 0,
+      removed = 0;
+    const seen = new Set<string>();
+    for (const r of rows) {
+      seen.add(r.id);
+      const local = readProject(r.id);
+      const localAt = list.find((m) => m.id === r.id)?.updatedAt ?? local?.updatedAt ?? "";
+      if (r.deleted_at) {
+        if (local && localAt <= r.updated_at) {
+          try {
+            localStorage.removeItem(itemKey(r.id));
+          } catch {
+            /* ignore */
+          }
+          list = list.filter((m) => m.id !== r.id);
+          removed++;
+        } else if (local) {
+          await cloudUpsert(r.id, local, email);
+          pushed++;
+        }
+        continue;
+      }
+      if (!local || localAt < r.updated_at) {
+        const p = normalizeProject({ ...r.data, updatedAt: r.updated_at });
+        writeProject(r.id, p);
+        const meta = { id: r.id, name: p.name, updatedAt: r.updated_at };
+        list = list.some((m) => m.id === r.id) ? list.map((m) => (m.id === r.id ? meta : m)) : [...list, meta];
+        pulled++;
+      } else if (localAt > r.updated_at) {
+        await cloudUpsert(r.id, local, email);
+        pushed++;
+      }
+    }
+    for (const m of ix.list) {
+      if (seen.has(m.id)) continue;
+      const local = readProject(m.id);
+      if (local) {
+        await cloudUpsert(m.id, local, email);
+        pushed++;
+      }
+    }
+    if (!list.length) {
+      const id = uid();
+      const p = sampleProject();
+      writeProject(id, p);
+      list = [{ id, name: p.name, updatedAt: p.updatedAt }];
+    }
+    const curId = list.some((m) => m.id === ix.currentId) ? ix.currentId : list[0].id;
+    writeIndex({ currentId: curId, list });
+    setList(list);
+    setCurrentId(curId);
+    const cur = readProject(curId);
+    if (cur) setProjectState(cur);
+    return { pulled, pushed, removed };
+  }, []);
+
+  return { project, setProject, replaceProject, list, currentId, switchTo, createProject, deleteProject, cloudSync };
 }
 
 export function downloadText(filename: string, text: string, mime = "application/json") {

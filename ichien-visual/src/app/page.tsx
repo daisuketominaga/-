@@ -9,6 +9,7 @@ import FloorPlan from "@/components/FloorPlan";
 import Elevation from "@/components/Elevation";
 import BuildableGrid from "@/components/BuildableGrid";
 import PrintView from "@/components/PrintView";
+import CloudPanel from "@/components/CloudPanel";
 
 type Tab = "photo" | "site" | "grid" | "floor" | "elevation" | "print";
 
@@ -22,7 +23,7 @@ const TABS: { id: Tab; label: string; short: string }[] = [
 ];
 
 export default function Home() {
-  const { project, setProject, replaceProject, list, currentId, switchTo, createProject, deleteProject } = useProject();
+  const { project, setProject, replaceProject, list, currentId, switchTo, createProject, deleteProject, cloudSync } = useProject();
   const [tab, setTab] = useState<Tab>("site");
 
   useEffect(() => {
@@ -103,6 +104,8 @@ export default function Home() {
               ファイルから読込
               <input type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
             </label>
+            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <CloudPanel sync={cloudSync} />
           </div>
         )}
       </header>
