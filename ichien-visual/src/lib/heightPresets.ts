@@ -106,12 +106,14 @@ export const KODO_PRESETS: KodoPreset[] = [
     id: "yokohama-4",
     pref: "神奈川県",
     city: "横浜市",
-    name: "第4種高度地区（絶対高さ31m・北側斜線なし）",
+    name: "第4種高度地区（式は要原文確認）",
     segs: [],
-    absoluteMax: 31,
+    absoluteMax: 0,
     verified: false,
     source: "https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kisoku/toriatsukai.files/08_5-4.pdf",
+    note: "検索要約では『絶対高さ31m・北側斜線なし』だったが、実物の設計図（戸塚区深谷町・準住居・第4種）では高度斜線の検討がされていた。数値は原文を見て手入力すること",
   },
+
   {
     id: "kawasaki-1",
     pref: "神奈川県",

@@ -248,3 +248,84 @@ export function lessonProject1(): Project {
   p.building = buildingFromGrid(p.site, p.grid, p.building.w, p.building.d, p.building);
   return p;
 }
+
+
+/**
+ * 教材2: 横浜市戸塚区深谷町（建売・イーカム設計、確定図 2025年6月19日）。測量図なし。
+ * 敷地は配置図の求積表（Xn=南北, Yn=東西）から。敷地面積 110.50㎡。準住居地域・準防火・第4種高度地区・宅造規制区域。
+ * 道路: 法42条1項5号（認定幅員4.5m）。敷地は北辺10.25mのうち東側4.25mだけ道路に接する。
+ * 建物: 2階建て L形（建築面積54.33）。ここでは外接矩形 9.10×6.37 で近似。最高高さ 8.261、最高軒高 6.100、1FL +581。
+ * 設計事務所の判定: 建ぺい率 49.17%（≦60）、容積率 90.67%（≦180、道路幅員 4.5×0.4）、道路斜線・高度斜線とも支障なし。
+ * 真北は配置図の記載 33°（時計回りと判断【要確認】）。
+ */
+export function lessonProject2(): Project {
+  // 求積表: 点名, Xn(北), Yn(東)。描画は x=Yn, y=Xn
+  const raw: [string, number, number][] = [
+    ["100", 294.455, 290.976], ["A19", 284.311, 293.376], ["A17-1", 285.012, 296.118], ["A25", 285.321, 299.282], ["A12", 285.798, 303.838], ["A9", 296.605, 301.004],
+  ];
+  const minX = Math.min(...raw.map((r) => r[2]));
+  const minY = Math.min(...raw.map((r) => r[1]));
+  const points = raw.map(([, X, Y]) => ({ x: +(Y - minX).toFixed(3), y: +(X - minY).toFixed(3) }));
+  const lens = [10.42, 2.83, 3.18, 4.58, 11.17, 10.25];
+  const base = sampleProject();
+  const p: Project = {
+    ...base,
+    name: "教材2 戸塚区深谷町",
+    address: "神奈川県横浜市戸塚区深谷町字谷中1528番6、1525番4",
+    catchCopy: "",
+    site: {
+      points,
+      edges: lens.map((l, i) => (i === 5 ? { index: i, length: l, road: true, roadWidth: 4.5, roadLabel: "法42条1項5号（認定幅員4.5m）接道4.25m", note: "隣地6.00＋道路4.25" } : { index: i, length: l })),
+      northDeg: 33,
+      areaOverride: 110.5,
+      coverageRatio: 60,
+      farRatio: 200,
+      setback: 0.5,
+      fireproofException: false,
+      roadLevelDiff: 0,
+      cornerLot: false,
+      heightRules: {
+        zoneId: "quasi",
+        roadSlope: 1.25,
+        roadApplyDist: 20,
+        northEnabled: false,
+        northBase: 5,
+        northSlope: 1.25,
+        neighborEnabled: true,
+        neighborBase: 20,
+        neighborSlope: 1.25,
+        kodoEnabled: true,
+        kodoPresetId: "yokohama-4",
+        kodoSegs: [],
+        kodoAbsolute: 0,
+        absoluteMax: 0,
+        skyEnabled: true,
+      },
+    },
+    grid: { baseEdge: 5, u: 0.62, v: 2.35 },
+    building: {
+      ...base.building,
+      w: 9.1,
+      d: 6.37,
+      floors: 2,
+      floorHeights: [2.4, 2.469],
+      foundation: 0.481,
+      roof: "gable",
+      roofHighSide: "E",
+      roofPitchSun: 6,
+      eaveOverhang: 0.25,
+      roofDrop: {},
+      structureLabel: "木造2階建て",
+      wallLabel: "T1000 ソフトリシン吹付",
+      accentLabel: "カパラスKS40 フレッシュグリーンII 屋根",
+    },
+    floors: [
+      { level: 1, rooms: [{ id: "L1", name: "1階（面積合わせ 53.82㎡）", type: "other", x: 0, y: 0, w: 9.1, d: 5.914 }], fixtures: [] },
+      { level: 2, rooms: [{ id: "L2", name: "2階（面積合わせ 46.37㎡）", type: "other", x: 0, y: 0, w: 9.1, d: 5.096 }], fixtures: [] },
+    ],
+    openings: [],
+    updatedAt: new Date().toISOString(),
+  };
+  p.building = buildingFromGrid(p.site, p.grid, p.building.w, p.building.d, p.building);
+  return p;
+}
