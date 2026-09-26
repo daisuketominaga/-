@@ -42,7 +42,7 @@ export function normalizeProject(p: Project): Project {
   }));
   return p;
 }
-function readProject(id: string): Project | null {
+export function readProject(id: string): Project | null {
   try {
     const raw = localStorage.getItem(itemKey(id));
     if (!raw) return null;

@@ -9,6 +9,7 @@ import { checkSkyFactor, checkSkyFactorBoundary, type SkyResult } from "@/lib/sk
 import { ZONE_PRESETS as ZP } from "@/lib/heightPresets";
 import { checkShadow, type ShadowResult } from "@/lib/shadow";
 import KodoImport from "./KodoImport";
+import ZoningImport from "./ZoningImport";
 import { polygonArea, round, footprintArea, footprintWorld } from "@/lib/geometry";
 
 type Props = {
@@ -202,6 +203,7 @@ export default function HeightCheck({ project, setProject }: Props) {
       </table>
 
       {/* 用途地域 */}
+      <ZoningImport project={project} setProject={setProject} compact />
       <div className="space-y-1 text-xs">
         <span className="label">用途地域（都市計画図で確認して選ぶ）</span>
         <select className="field" value={r.zoneId} onChange={(e) => setR(rulesFromZone(e.target.value, site.farRatio, r))}>

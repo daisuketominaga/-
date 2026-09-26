@@ -10,8 +10,10 @@ import Elevation from "@/components/Elevation";
 import BuildableGrid from "@/components/BuildableGrid";
 import PrintView from "@/components/PrintView";
 import CloudPanel from "@/components/CloudPanel";
+import SurveyChecklist from "@/components/SurveyChecklist";
+import Compare from "@/components/Compare";
 
-type Tab = "photo" | "site" | "grid" | "floor" | "elevation" | "print";
+type Tab = "photo" | "site" | "grid" | "floor" | "elevation" | "survey" | "compare" | "print";
 
 const TABS: { id: Tab; label: string; short: string }[] = [
   { id: "photo", label: "写真一括補正", short: "写真" },
@@ -19,7 +21,9 @@ const TABS: { id: Tab; label: string; short: string }[] = [
   { id: "grid", label: "建築可能範囲", short: "配置" },
   { id: "floor", label: "間取り図", short: "間取り" },
   { id: "elevation", label: "立面図", short: "立面" },
-  { id: "print", label: "印刷・PDF", short: "印刷" },
+  { id: "survey", label: "役所調査", short: "調査" },
+  { id: "compare", label: "案の比較・費用", short: "比較" },
+  { id: "print", label: "提案書・PDF", short: "印刷" },
 ];
 
 export default function Home() {
@@ -104,7 +108,6 @@ export default function Home() {
               ファイルから読込
               <input type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
             </label>
-            <span className="mx-1 h-5 w-px bg-slate-200" />
             <CloudPanel sync={cloudSync} />
           </div>
         )}
@@ -129,7 +132,9 @@ export default function Home() {
         <div className="card text-sm text-slate-500">読み込み中…</div>
       ) : (
         <main>
-          {tab === "photo" && <PhotoBatch />}
+          {tab === "photo" && <PhotoBatch project={project} setProject={setProject} />}
+          {tab === "survey" && <SurveyChecklist project={project} setProject={setProject} />}
+          {tab === "compare" && <Compare project={project} setProject={setProject} list={list} currentId={currentId} />}
           {tab === "site" && <SitePlan project={project} setProject={setProject} />}
           {tab === "grid" && <BuildableGrid project={project} setProject={setProject} />}
           {tab === "floor" && <FloorPlan project={project} setProject={setProject} />}

@@ -279,10 +279,62 @@ export type GridSetting = {
 export const MODULE = 0.91;
 export const HALF = 0.455;
 
+/** 役所調査チェックリストの1項目 */
+export type SurveyStatus = "unchecked" | "ok" | "ng" | "na";
+export type SurveyItem = {
+  key: string;
+  label: string;
+  /** 調べた内容（例: 第一種低層住居専用地域、建ぺい50/容積100） */
+  value: string;
+  status: SurveyStatus;
+  /** 出典（URL、窓口名、担当者名など） */
+  source: string;
+  /** 確認日 YYYY-MM-DD */
+  checkedAt: string;
+  note: string;
+};
+
+/** 概算費用・収支の入力（単価はすべて利用者が入れる。空なら計算しない） */
+export type CostInput = {
+  /** 建築費の坪単価（万円/坪、延床ベース） */
+  tsuboPrice?: number;
+  /** 解体費（万円） */
+  demolition?: number;
+  /** 外構・造成・擁壁（万円） */
+  exterior?: number;
+  /** 設計・確認申請・地盤改良・給排水引込などの付帯（万円） */
+  extra?: number;
+  /** 諸費用の割合（%）: 登記・ローン・火災保険・仲介など */
+  miscRate?: number;
+  /** 土地価格（万円） */
+  landPrice?: number;
+  /** 想定売価（万円）（建売・仕入れ判断用） */
+  salePrice?: number;
+  /** 想定月額賃料（万円/月）（賃貸用） */
+  monthlyRent?: number;
+  note?: string;
+};
+
+/** 物件に紐づく写真（縮小して保存） */
+export type ProjectPhoto = {
+  id: string;
+  kind: "exterior" | "interior" | "around" | "other";
+  dataUrl: string;
+  caption: string;
+  takenAt?: string;
+};
+
 export type Project = {
   name: string;
   address: string;
   catchCopy: string;
+  /** 物件説明文（提案書用） */
+  description?: string;
+  /** 担当者名（提案書用） */
+  staff?: string;
+  survey?: SurveyItem[];
+  cost?: CostInput;
+  photos?: ProjectPhoto[];
   site: Site;
   grid: GridSetting;
   building: Building;

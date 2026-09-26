@@ -113,7 +113,8 @@ export default function CloudPanel({ sync }: Props) {
   const label = !session ? "クラウド未接続" : status === "saving" ? "保存中…" : status === "error" ? "保存エラー" : "クラウド保存中";
 
   return (
-    <div className="relative text-xs">
+    <div className="relative flex items-center text-xs">
+      <span className="mx-1 h-5 w-px bg-slate-200" />
       <button className="btn-ghost flex items-center gap-1.5" onClick={() => setOpen((o) => !o)} title={statusMsg ?? label}>
         <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
         {session ? session.user.email : "ログイン"}

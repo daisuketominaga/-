@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
+import type { Project } from "@/lib/types";
+import ProjectPhotos from "./ProjectPhotos";
 
 type Preset = "bright" | "natural" | "warm" | "cool";
 
@@ -160,7 +162,7 @@ function canvasToBlob(c: HTMLCanvasElement, q: number) {
   return new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), "image/jpeg", q));
 }
 
-export default function PhotoBatch() {
+export default function PhotoBatch({ project, setProject }: { project?: Project; setProject?: (u: (p: Project) => Project) => void }) {
   const [items, setItems] = useState<Item[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT);
   const [busy, setBusy] = useState(false);
@@ -259,6 +261,7 @@ export default function PhotoBatch() {
   const sel = useMemo(() => items.find((i) => i.id === selected) ?? null, [items, selected]);
 
   return (
+    <>
     <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
       <aside className="space-y-4">
         <div className="card space-y-3">
@@ -337,6 +340,21 @@ export default function PhotoBatch() {
           <button className="btn-primary w-full justify-center" disabled={busy || items.length === 0} onClick={exportZip}>
             {busy ? `処理中… ${progress}%` : `補正済みをまとめて保存（${items.length}枚 ZIP）`}
           </button>
+          {items.length > 0 && project && setProject && (
+            <button className="btn-ghost w-full justify-center" disabled={busy} onClick={async () => {
+              // 補正済み（プレビュー解像度ではなく書き出し設定で再処理）をこの物件の写真に入れる
+              const blobs: Blob[] = []; const names: string[] = [];
+              for (const it of items) { const img = imgCache.current.get(it.id); if (!img) continue; const c = processImage(img, it.meanL, settings, it.exposure, 1600); blobs.push(await canvasToBlob(c, 0.9)); names.push(it.name); }
+              const { shrinkPhoto } = await import("./ProjectPhotos");
+              const { uid } = await import("@/lib/store");
+              const photos = [] as NonNullable<Project["photos"]>;
+              for (let i = 0; i < blobs.length; i++) photos.push({ id: uid(), kind: "other", dataUrl: await shrinkPhoto(blobs[i]), caption: names[i].replace(/\.[^.]+$/, ""), takenAt: new Date(items[i].file.lastModified).toISOString().slice(0, 10) });
+              setProject((p) => ({ ...p, photos: [...(p.photos ?? []), ...photos].slice(0, 16) }));
+              alert(`${photos.length} 枚を「${project.name}」の写真に入れました（下の一覧で 外観/室内/周辺 を選べます）`);
+            }}>
+              補正済みをこの物件の写真に入れる
+            </button>
+          )}
           {items.length > 0 && (
             <button className="btn-ghost w-full justify-center" onClick={() => { setItems([]); imgCache.current.clear(); setSelected(null); }}>
               全部クリア
@@ -399,6 +417,12 @@ export default function PhotoBatch() {
         )}
       </section>
     </div>
+      {project && setProject && (
+        <div className="card lg:col-span-2">
+          <ProjectPhotos project={project} setProject={setProject} />
+        </div>
+      )}
+    </>
   );
 }
 
