@@ -8,7 +8,7 @@ import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
 import { AllElevationsSvg, elevationTitle } from "./Elevation";
-import { verdictRows, useSky, useShadow } from "./HeightCheck";
+import { verdictRows, useSky, useShadow, useBoundarySky } from "./HeightCheck";
 import FixtureSchedule from "./FixtureSchedule";
 
 type Props = {
@@ -31,7 +31,8 @@ export default function PrintView({ project, setProject }: Props) {
   const siteArea = project.site.areaOverride ?? 0;
   const sky = useSky(project);
   const shadow = useShadow(project);
-  const rows = verdictRows(project, sky, shadow);
+  const bsky = useBoundarySky(project);
+  const rows = verdictRows(project, sky, shadow, bsky);
 
   return (
     <div className="space-y-4">

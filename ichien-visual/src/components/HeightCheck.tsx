@@ -5,7 +5,8 @@ import type { Project, HeightRules } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
 import { KODO_PRESETS, ZONE_PRESETS, ZONE_SOURCE } from "@/lib/heightPresets";
 import { rulesOf, rulesFromZone, rulesFromKodo, checkLimits3D, levels, roadInfos, roadLevelOffset } from "@/lib/heightLimits";
-import { checkSkyFactor, type SkyResult } from "@/lib/skyFactor";
+import { checkSkyFactor, checkSkyFactorBoundary, type SkyResult } from "@/lib/skyFactor";
+import { ZONE_PRESETS as ZP } from "@/lib/heightPresets";
 import { checkShadow, type ShadowResult } from "@/lib/shadow";
 import KodoImport from "./KodoImport";
 import { polygonArea, round, footprintArea, footprintWorld } from "@/lib/geometry";
@@ -21,8 +22,10 @@ type Row = { item: string; status: "ok" | "ng" | "unknown" | "na"; detail: strin
 export type SkyAll = { road: string; result: SkyResult | { error: string } }[];
 
 export type ShadowAll = ShadowResult | { error: string } | null;
+/** 隣地・北側斜線の天空率（斜線を超えたときだけ計算） */
+export type BoundarySkyAll = { kind: "neighbor" | "north"; label: string; edgeIndex: number; result: SkyResult | { error: string } }[];
 
-export function verdictRows(project: Project, skyAll: SkyAll | null, shadow: ShadowAll = null): Row[] {
+export function verdictRows(project: Project, skyAll: SkyAll | null, shadow: ShadowAll = null, bsky: BoundarySkyAll | null = null): Row[] {
   const r = rulesOf(project);
   const b = project.building;
   const lv = levels(b);
@@ -72,19 +75,35 @@ export function verdictRows(project: Project, skyAll: SkyAll | null, shadow: Sha
     rows.push({ item: `天空率（${x.road}）`, status: "error" in res ? "unknown" : res.ok ? "ok" : "ng", detail: "error" in res ? res.error : `算定位置 ${res.points.length} 点（間隔 ${round(res.info.pitch, 2)}m）、最小余裕 ${round(res.worst * 100, 2)} ポイント。${res.info.note.join("。")}` });
   }
 
+  const bskyVerdict = (kind: "neighbor" | "north") => {
+    const xs = (bsky ?? []).filter((x) => x.kind === kind);
+    if (!xs.length) return null;
+    const errs = xs.filter((x) => "error" in x.result);
+    const oks = xs.filter((x) => !("error" in x.result) && x.result.ok);
+    const ngs = xs.filter((x) => !("error" in x.result) && !x.result.ok);
+    return { all: xs, ok: xs.length > 0 && ngs.length === 0 && errs.length === 0, oks, ngs, errs };
+  };
   const nb = lims.find((l) => l.key === "neighbor");
   if (!r.neighborEnabled) rows.push({ item: "隣地斜線", status: "na", detail: "対象外（低層住専）または未使用" });
-  else rows.push({ item: "隣地斜線", status: nb && nb.over > 0 ? "ng" : "ok", detail: nb && nb.over > 0 ? `最大 ${mm(nb.over)}mm 超え${wp(nb)}` : `${r.neighborBase}m＋${r.neighborSlope}×距離 の内側` });
+  else if (nb && nb.over > 0) {
+    const v = r.skyEnabled ? bskyVerdict("neighbor") : null;
+    if (v && v.ok) rows.push({ item: "隣地斜線", status: "ok", detail: `斜線は最大 ${mm(nb.over)}mm 超えるが、天空率で適合（令135条の7・全隣地境界線）` });
+    else rows.push({ item: "隣地斜線", status: "ng", detail: `最大 ${mm(nb.over)}mm 超え${wp(nb)}${v ? `。天空率でも不適合（${v.ngs.map((x) => x.label).join("、")}${v.errs.length ? " / 計算不可: " + v.errs.map((x) => x.label).join("、") : ""}）` : r.skyEnabled ? "。天空率は未計算" : ""}` });
+  } else rows.push({ item: "隣地斜線", status: "ok", detail: `${r.neighborBase}m＋${r.neighborSlope}×距離 の内側` });
 
   const north = lims.find((l) => l.key === "north");
   if (!r.northEnabled) rows.push({ item: "北側斜線", status: "na", detail: "対象外（低層・中高層住専以外）" });
-  else rows.push({ item: "北側斜線", status: north && north.over > 0 ? "ng" : "ok", detail: north && north.over > 0 ? `最大 ${mm(north.over)}mm 超え${wp(north)}` : `${r.northBase}m＋${r.northSlope}×真北距離 の内側${north?.worst ? `（余裕 最小 ${mm(north.worst.limit - north.worst.z)}mm）` : ""}` });
+  else if (north && north.over > 0) {
+    const v = r.skyEnabled ? bskyVerdict("north") : null;
+    if (v && v.ok) rows.push({ item: "北側斜線", status: "ok", detail: `斜線は最大 ${mm(north.over)}mm 超えるが、天空率で適合（令135条の8）${r.kodoEnabled ? "。※高度地区は天空率でかわせません（法58条）" : ""}` });
+    else rows.push({ item: "北側斜線", status: "ng", detail: `最大 ${mm(north.over)}mm 超え${wp(north)}${v ? `。天空率でも不適合（${v.ngs.map((x) => x.label).join("、")}${v.errs.length ? " / 計算不可: " + v.errs.map((x) => x.label).join("、") : ""}）` : r.skyEnabled ? "。天空率は未計算" : ""}` });
+  } else rows.push({ item: "北側斜線", status: "ok", detail: `${r.northBase}m＋${r.northSlope}×真北距離 の内側${north?.worst ? `（余裕 最小 ${mm(north.worst.limit - north.worst.z)}mm）` : ""}` });
 
   const kodo = lims.find((l) => l.key === "kodo");
   const kp = KODO_PRESETS.find((k) => k.id === r.kodoPresetId);
   if (!r.kodoEnabled) rows.push({ item: "高度地区", status: "unknown", detail: "未設定。指定の有無を都市計画図で確認してください" });
   else if (!r.kodoSegs.length && !r.kodoAbsolute) rows.push({ item: "高度地区", status: "unknown", detail: `${kp?.name ?? "手入力"}: 数値が入っていません` });
-  else rows.push({ item: "高度地区", status: (kodo && kodo.over > 0) || (r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute) ? "ng" : kp && !kp.verified ? "unknown" : "ok", detail: `${kp?.name ?? "手入力"}${kp && !kp.verified ? "【要確認: 数値は検索要約からの転記】" : ""}${kodo && kodo.over > 0 ? ` 斜線を最大 ${mm(kodo.over)}mm 超え${wp(kodo)}` : kodo?.worst ? ` 斜線の余裕 最小 ${mm(kodo.worst.limit - kodo.worst.z)}mm（軒先・屋根面の全点で判定）` : ""}${r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute ? ` 絶対高さ ${r.kodoAbsolute}m を超え` : ""}` });
+  else rows.push({ item: "高度地区", status: (kodo && kodo.over > 0) || (r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute) ? "ng" : kp && !kp.verified ? "unknown" : "ok", detail: `${kp?.name ?? "手入力"}${kp && !kp.verified ? "【要確認: 数値は検索要約からの転記】" : kp ? "（原文確認済み）" : ""}${kodo && kodo.over > 0 ? ` 斜線を最大 ${mm(kodo.over)}mm 超え${wp(kodo)}（高度地区は天空率の対象外・法58条）` : kodo?.worst ? ` 斜線の余裕 最小 ${mm(kodo.worst.limit - kodo.worst.z)}mm（軒先・屋根面の全点で判定）` : ""}${r.kodoAbsolute > 0 && lv.max > r.kodoAbsolute ? ` 絶対高さ ${r.kodoAbsolute}m を超え` : ""}` });
 
   const abs = lims.find((l) => l.key === "abs");
   if (r.absoluteMax > 0) rows.push({ item: "絶対高さ（法55条）", status: abs && abs.over > 0 ? "ng" : "ok", detail: `${r.absoluteMax}m（最高高さ ${mm(lv.max)}mm）` });
@@ -112,6 +131,34 @@ export function useSky(project: Project): SkyAll | null {
   }, [project]);
 }
 
+/** 隣地・北側斜線を超えているときだけ、その境界線ごとに天空率を計算する */
+export function useBoundarySky(project: Project): BoundarySkyAll | null {
+  return useMemo(() => {
+    const r = rulesOf(project);
+    if (!r.skyEnabled) return null;
+    const lims = checkLimits3D(project);
+    const lv = levels(project.building);
+    const site = project.site;
+    const out: BoundarySkyAll = [];
+    const nb = lims.find((l) => l.key === "neighbor");
+    if (r.neighborEnabled && nb && nb.over > 0) {
+      for (const e of site.edges.filter((x) => !x.road && x.index < site.points.length)) {
+        out.push({ kind: "neighbor", label: `隣地 P${e.index + 1}→P${((e.index + 1) % site.points.length) + 1}`, edgeIndex: e.index, result: checkSkyFactorBoundary({ site, grid: project.grid, building: project.building, kind: "neighbor", edgeIndex: e.index, base: r.neighborBase, slope: r.neighborSlope, eave: lv.eave, maxHeight: lv.max }) });
+      }
+    }
+    const north = lims.find((l) => l.key === "north");
+    if (r.northEnabled && north && north.over > 0) {
+      const zone = ZP.find((z) => z.id === r.zoneId);
+      for (let i = 0; i < site.points.length; i++) {
+        const res = checkSkyFactorBoundary({ site, grid: project.grid, building: project.building, kind: "north", edgeIndex: i, base: r.northBase, slope: r.northSlope, eave: lv.eave, maxHeight: lv.max, lowRise: zone ? zone.lowRise : r.northBase <= 5 });
+        if ("error" in res && res.error.includes("北を向いていない")) continue;
+        out.push({ kind: "north", label: `北側 P${i + 1}→P${((i + 1) % site.points.length) + 1}`, edgeIndex: i, result: res });
+      }
+    }
+    return out;
+  }, [project]);
+}
+
 export function useShadow(project: Project): ShadowAll {
   return useMemo(() => {
     const r = rulesOf(project);
@@ -127,7 +174,8 @@ export default function HeightCheck({ project, setProject }: Props) {
   const patch = (x: Partial<HeightRules>) => setR({ ...r, ...x });
   const sky = useSky(project);
   const shadow = useShadow(project);
-  const rows = verdictRows(project, sky, shadow);
+  const bsky = useBoundarySky(project);
+  const rows = verdictRows(project, sky, shadow, bsky);
   const prefs = ["東京都", "神奈川県"] as const;
   const kp = KODO_PRESETS.find((k) => k.id === r.kodoPresetId);
   const lv = levels(b);
@@ -186,7 +234,16 @@ export default function HeightCheck({ project, setProject }: Props) {
             </select>
             {r.kodoNote && !kp && <div className="rounded bg-emerald-50 p-1.5 text-[10px] text-emerald-900">値の出どころ: {r.kodoNote}</div>}
             <KodoImport defaultKind={kp?.name.replace(/（.*$/, "") ?? "第1種高度地区"} city={kp?.city} onResult={(res) => setR({ ...r, kodoEnabled: true, kodoPresetId: "", kodoSegs: res.segs, kodoAbsolute: res.absoluteMax, kodoNote: res.label })} />
-            {kp && (
+            {kp && kp.verified && (
+              <div className="rounded bg-emerald-50 p-1.5 text-[10px] leading-relaxed text-emerald-900">
+                原文から転記済み: {kp.note}。出典: <a className="underline" href={kp.source} target="_blank" rel="noreferrer">{kp.source.replace(/^https?:\/\//, "").slice(0, 40)}…</a>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-1 text-[10px]">
+              <label className="flex items-center gap-1"><input type="checkbox" checked={r.kodoRoadHalf !== false} onChange={(e) => patch({ kodoRoadHalf: e.target.checked })} />北側の道路等は幅の1/2だけ外側を境界とみなす</label>
+              <label className="flex flex-col"><span className="text-slate-400">敷地が北側隣地より低い量 m（1m以上で緩和）</span><input type="number" step="0.1" className="field px-1 py-0.5" value={r.northLevelDiff ?? 0} onChange={(e) => patch({ northLevelDiff: Number(e.target.value) })} /></label>
+            </div>
+            {kp && !kp.verified && (
               <div className="rounded bg-amber-50 p-1.5 text-[10px] leading-relaxed text-amber-900">
                 【要確認】この数値は検索結果の要約からの転記で、原文は未確認です。{kp.note ? kp.note + "。" : ""}
                 出典: <a className="underline" href={kp.source} target="_blank" rel="noreferrer">{kp.source.replace(/^https?:\/\//, "").slice(0, 40)}…</a>
@@ -276,6 +333,30 @@ export default function HeightCheck({ project, setProject }: Props) {
         )}
       </div>
 
+      {r.skyEnabled && bsky && bsky.length > 0 && bsky.map((x) => (
+        <div key={x.kind + x.edgeIndex} className="space-y-1 text-xs">
+          <div className="font-medium">天空率（{x.label}・{x.kind === "neighbor" ? "令135条の7" : "令135条の8"} 参考計算）</div>
+          {"error" in x.result ? <div className="text-red-600">{x.result.error}</div> : (() => { const sk = x.result; return (
+            <>
+              <div className="text-[10px] text-slate-500">{sk.info.note.join("。")}</div>
+              <table className="w-full text-[11px]">
+                <thead><tr className="text-slate-500"><th className="text-left">位置</th><th className="text-right">適合建築物</th><th className="text-right">計画建築物</th><th className="text-right">判定</th></tr></thead>
+                <tbody>
+                  {sk.points.map((p) => (
+                    <tr key={p.index} className="border-b border-dashed border-slate-200">
+                      <td>P{p.index}</td>
+                      <td className="text-right tabular-nums">{(p.conform * 100).toFixed(1)}%</td>
+                      <td className="text-right tabular-nums">{(p.plan * 100).toFixed(1)}%</td>
+                      <td className={`text-right font-medium ${p.ok ? "text-emerald-700" : "text-red-600"}`}>{p.ok ? "○" : "×"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <SkyDiagram sky={sk} />
+            </>
+          ); })()}
+        </div>
+      ))}
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="flex flex-col"><span className="text-[9px] text-slate-400">敷地が道路より高い量 m（令135条の2）</span><input type="number" step="0.1" className="field px-1 py-0.5" value={site.roadLevelDiff ?? 0} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, roadLevelDiff: Number(e.target.value) } }))} /></label>
         <label className="flex items-center gap-2 self-end"><input type="checkbox" checked={!!site.cornerLot} onChange={(e) => setProject((p) => ({ ...p, site: { ...p.site, cornerLot: e.target.checked } }))} />角地の建ぺい率緩和（＋10%）</label>

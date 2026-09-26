@@ -56,7 +56,7 @@ export function rulesFromZone(zoneId: string, far: number, prev: HeightRules): H
 export function rulesFromKodo(presetId: string, prev: HeightRules): HeightRules {
   const k = KODO_PRESETS.find((x) => x.id === presetId);
   if (!k) return { ...prev, kodoPresetId: presetId };
-  return { ...prev, kodoPresetId: presetId, kodoEnabled: true, kodoSegs: k.segs.map((s) => ({ ...s })), kodoAbsolute: k.absoluteMax };
+  return { ...prev, kodoPresetId: presetId, kodoEnabled: true, kodoSegs: k.segs.map((s) => ({ ...s })), kodoAbsolute: k.absoluteMax, kodoRoadHalf: k.roadHalf ?? true, kodoNote: undefined };
 }
 
 /** 区間式の評価（L: 真北方向の距離） */
@@ -275,16 +275,20 @@ export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
   const n = site.points.length;
   const roadIdx = new Set(site.edges.filter((x) => x.road).map((x) => x.index));
   const roadWidthOf = (i: number) => site.edges.find((x) => x.index === i)?.roadWidth ?? 4;
-  const northDist = (P: { x: number; y: number }): number | null => {
+  // 北側の境界までの真北方向の距離。roadFactor: 北側が道路等のとき足す幅の割合（法の北側斜線 = 1 反対側の境界線まで、横浜市の高度地区 = 1/2）
+  const northDist = (P: { x: number; y: number }, roadFactor = 1): number | null => {
     let best: { s: number; i: number } | null = null;
     for (let i = 0; i < n; i++) {
       const sHit = rayHit(P, north, site.points[i], site.points[(i + 1) % n]);
       if (sHit !== null && (!best || sHit < best.s)) best = { s: sHit, i };
     }
     if (!best) return null;
-    // 北側が道路なら、道路の反対側の境界線まで
-    return best.s + (roadIdx.has(best.i) ? roadWidthOf(best.i) : 0);
+    return best.s + (roadIdx.has(best.i) ? roadWidthOf(best.i) * roadFactor : 0);
   };
+  const kodoFactor = r.kodoRoadHalf === false ? 1 : 0.5;
+  // 高度地区の高低差緩和: 敷地が北側隣地より 1m 以上低いとき (h−1)/2 だけ斜線を上げる
+  const nl = r.northLevelDiff ?? 0;
+  const kodoLift = nl >= 1 ? (nl - 1) / 2 : 0;
   const neighborDist = (P: { x: number; y: number }): number => {
     let min = Infinity;
     for (let i = 0; i < n; i++) if (!roadIdx.has(i)) min = Math.min(min, distToSegment(P, site.points[i], site.points[(i + 1) % n]));
@@ -315,9 +319,8 @@ export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
         put(roads.length > 1 ? `road${rd.edgeIndex}` : "road", roads.length > 1 ? `道路斜線(${rd.label})` : "道路斜線", `勾配 ${r.roadSlope}`, z, lim, x, y);
       }
       if (r.northEnabled || (r.kodoEnabled && r.kodoSegs.length)) {
-        const L = northDist(P);
-        if (r.northEnabled) put("north", "北側斜線", `${r.northBase}m＋${r.northSlope}×L`, z, L === null ? null : r.northBase + r.northSlope * L, x, y);
-        if (r.kodoEnabled && r.kodoSegs.length) put("kodo", "高度地区", "北側の区間式", z, L === null ? null : evalSegs(r.kodoSegs, L), x, y);
+        if (r.northEnabled) { const L = northDist(P, 1); put("north", "北側斜線", `${r.northBase}m＋${r.northSlope}×L`, z, L === null ? null : r.northBase + r.northSlope * L, x, y); }
+        if (r.kodoEnabled && r.kodoSegs.length) { const L = northDist(P, kodoFactor); const lim = L === null ? null : evalSegs(r.kodoSegs, L); put("kodo", "高度地区", "北側の区間式", z, lim === null ? null : lim + kodoLift, x, y); }
       }
       if (r.neighborEnabled) {
         const d = neighborDist(P);

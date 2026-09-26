@@ -63,6 +63,10 @@ export type HeightRules = {
   kodoAbsolute: number;
   /** 高度地区の値の出どころ（資料から読み取ったときの表示用） */
   kodoNote?: string;
+  /** 高度地区: 北側の道路等は幅の 1/2 だけ外側を境界とみなす（横浜市の緩和(1)）。未設定は true */
+  kodoRoadHalf?: boolean;
+  /** 敷地の地盤面が北側隣地の地盤面より低い量 m（横浜市の緩和(3): 1m 以上で (h−1)/2 だけ斜線を上げる） */
+  northLevelDiff?: number;
   /** 絶対高さ制限 m（低層住専の 10m/12m など。0 なら無し） */
   absoluteMax: number;
   /** 天空率で道路斜線を検討する */

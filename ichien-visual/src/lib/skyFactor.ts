@@ -243,3 +243,145 @@ export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
     info: { roadW, back, applyDist, slope, pitch, note },
   };
 }
+
+// ===== 隣地斜線・北側斜線の天空率（令135条の7・令135条の8）=====
+
+export type BoundarySkyInput = {
+  site: Site;
+  grid: GridSetting;
+  building: Building;
+  kind: "neighbor" | "north";
+  /** 対象の境界線（points[i] → points[i+1]） */
+  edgeIndex: number;
+  /** 斜線の起点高さと勾配（隣地: 20/1.25 or 31/2.5、北側: 5 or 10 / 1.25） */
+  base: number;
+  slope: number;
+  eave: number;
+  maxHeight: number;
+  /** 北側用: 真北の向き（画面上から時計回り度）と、低層住専か（算定位置 4m・間隔 1m。中高層は 8m・2m） */
+  northDeg?: number;
+  lowRise?: boolean;
+  nAz?: number;
+  nAlt?: number;
+};
+
+/** 建物の立体を任意の座標系（frame）に写した計画建築物 */
+function planPrismsIn(site: Site, grid: GridSetting, b: Building, rf: Frame, eave: number, maxHeight: number): Prism[] {
+  const bf = baseFrame(site, grid.baseEdge);
+  const toWorldB = (u: number, v: number) => ({ x: bf.a.x + u * bf.t.x + v * bf.n.x, y: bf.a.y + u * bf.t.y + v * bf.n.y });
+  const toRoad = (p: Pt) => toLocal(rf, toWorldB(grid.u + p.x, grid.v + p.y));
+  const toBuilding = (u: number, v: number) => {
+    const w = { x: rf.a.x + u * rf.t.x + v * rf.n.x, y: rf.a.y + u * rf.t.y + v * rf.n.y };
+    const l = toLocal(bf, w);
+    return { x: l.x - grid.u, y: l.y - grid.v };
+  };
+  const out: Prism[] = [];
+  for (const solid of buildingSolids(b, eave, roofRise(b), maxHeight)) {
+    const poly = solid.poly.map(toRoad);
+    if (poly.length >= 3) out.push({ poly, top: (u, v) => { const p = toBuilding(u, v); return solid.top(p.x, p.y); }, zmax: maxHeight });
+  }
+  return out;
+}
+
+function evalPoints(conform: Prism[], plan: Prism[], pts: Pt[], nAz: number, nAlt: number) {
+  const points: SkyPoint[] = [];
+  let worst = Infinity;
+  let diagram = { plan: [] as number[], conform: [] as number[] };
+  pts.forEach((o, i) => {
+    const c = skyFactor(conform, o, nAz, nAlt);
+    const p = skyFactor(plan, o, nAz, nAlt);
+    const confR = Math.ceil(c.sky * 1000) / 1000;
+    const planR = Math.floor(p.sky * 1000) / 1000;
+    const margin = planR - confR;
+    if (margin < worst) { worst = margin; diagram = { plan: p.profile, conform: c.profile }; }
+    points.push({ index: i + 1, u: o.x, v: o.y, plan: planR, conform: confR, ok: planR >= confR });
+  });
+  return { points, worst, diagram };
+}
+
+/**
+ * 隣地斜線（令135条の7）・北側斜線（令135条の8）の天空率。
+ * 隣地: 対象の隣地境界線を底辺にした座標系。適合建築物 = 敷地（凸包）で高さ ≤ base + slope×(境界からの距離)。
+ *       算定位置は境界線から base/slope（16m or 12.4m）外側の線上、両端と、その間を (base/slope)/2 以内の等間隔。
+ * 北側: 真北を v 軸にした座標系。適合建築物 = 敷地（凸包）を東西の細い帯に分け、各帯で高さ ≤ base + slope×(北側境界までの真北距離)。
+ *       北側境界が道路なら反対側の境界線から測る。算定位置は対象の境界線を真北へ 4m（低層）/8m（中高層）動かした線上、間隔 1m/2m 以内。
+ * 後退緩和（法56条6項・7項の適合建築物の後退）は未対応（適合建築物を小さく見る＝安全側）。
+ */
+export function checkSkyFactorBoundary(inp: BoundarySkyInput): SkyResult | { error: string } {
+  const { site, grid, building: b, base, slope } = inp;
+  const n = site.points.length;
+  const edge = site.edges.find((e) => e.index === inp.edgeIndex);
+  const isRoad = !!edge?.road;
+  const note: string[] = [];
+  const nAz = inp.nAz ?? 360;
+  const nAlt = inp.nAlt ?? 90;
+  if (inp.kind === "neighbor") {
+    if (isRoad) return { error: "道路に接する辺には隣地斜線はかかりません" };
+    const rf = baseFrame(site, inp.edgeIndex);
+    const hull = convexHull(site.points.map((p) => toLocal(rf, p)));
+    if (hull.length !== site.points.length) note.push("敷地が凹形のため凸包で計算（安全側）");
+    const confPoly = clipHalf(hull, { x: 0, y: 1 }, 0);
+    const zmax = base + slope * Math.max(...confPoly.map((p) => p.y));
+    const conform: Prism[] = confPoly.length >= 3 ? [{ poly: confPoly, top: (_u, v) => base + slope * Math.max(0, v), zmax }] : [];
+    const plan = planPrismsIn(site, grid, b, rf, inp.eave, inp.maxHeight);
+    const D = base / slope;
+    const nDiv = Math.max(1, Math.ceil(rf.len / (D / 2) - 1e-9));
+    const pitch = rf.len / nDiv;
+    const pts: Pt[] = [];
+    for (let i = 0; i <= nDiv; i++) pts.push({ x: pitch * i, y: -D });
+    const r = evalPoints(conform, plan, pts, nAz, nAlt);
+    return { ok: r.points.every((p) => p.ok), points: r.points, worst: r.worst, diagram: r.diagram, info: { roadW: 0, back: 0, applyDist: D, slope, pitch, note: [`算定位置は境界線から ${D}m 外側、間隔 ${pitch.toFixed(2)}m`, ...note] } };
+  }
+  // ---- 北側
+  const nd = ((inp.northDeg ?? site.northDeg) * Math.PI) / 180;
+  const north = { x: Math.sin(nd), y: Math.cos(nd) };
+  const east = { x: Math.cos(nd), y: -Math.sin(nd) };
+  const a = site.points[inp.edgeIndex], c = site.points[(inp.edgeIndex + 1) % n];
+  const rf: Frame = { a: { x: a.x, y: a.y }, t: east, n: north, len: Math.hypot(c.x - a.x, c.y - a.y), reversed: false };
+  const siteR = site.points.map((p) => toLocal(rf, p));
+  const hull = convexHull(siteR);
+  if (hull.length !== siteR.length) note.push("敷地が凹形のため凸包で計算（安全側）");
+  // 対象の辺が北を向いているか（外向き法線の北成分 > 0）
+  const ccw = siteR.reduce((s, p, i) => { const q = siteR[(i + 1) % n]; return s + p.x * q.y - q.x * p.y; }, 0) > 0;
+  const ex = c.x - a.x, ey = c.y - a.y;
+  const outward = ccw ? { x: ey, y: -ex } : { x: -ey, y: ex };
+  if (outward.x * north.x + outward.y * north.y <= 1e-9) return { error: "この辺は北を向いていないので北側斜線の対象外です" };
+  // 北側境界（道路なら反対側）までの距離: 東西の帯ごとに、帯の中心から真北へ伸ばして最後に交わる敷地の辺
+  const roadW = (i: number) => site.edges.find((e) => e.index === i)?.roadWidth ?? 4;
+  const roadIdx = new Set(site.edges.filter((e) => e.road).map((e) => e.index));
+  const uMin = Math.min(...hull.map((p) => p.x)), uMax = Math.max(...hull.map((p) => p.x));
+  const vMin = Math.min(...hull.map((p) => p.y));
+  const ds = 0.25;
+  const conform: Prism[] = [];
+  for (let u0 = uMin; u0 < uMax - 1e-9; u0 += ds) {
+    const u1 = Math.min(uMax, u0 + ds);
+    const um = (u0 + u1) / 2;
+    // 帯の中心から北へ: 敷地の辺との交点のうち最も北のもの
+    let vb = -Infinity, hitIdx = -1;
+    for (let i = 0; i < n; i++) {
+      const p = siteR[i], q = siteR[(i + 1) % n];
+      if ((p.x <= um) === (q.x <= um)) continue;
+      const t = (um - p.x) / (q.x - p.x);
+      const v = p.y + (q.y - p.y) * t;
+      if (v > vb) { vb = v; hitIdx = i; }
+    }
+    if (!Number.isFinite(vb)) continue;
+    const vBoundary = vb + (roadIdx.has(hitIdx) ? roadW(hitIdx) : 0);
+    let poly = clipHalf(hull, { x: 1, y: 0 }, u0);
+    poly = clipHalf(poly, { x: -1, y: 0 }, -u1);
+    if (poly.length < 3) continue;
+    conform.push({ poly, top: (_u, v) => base + slope * Math.max(0, vBoundary - v), zmax: base + slope * (vBoundary - vMin) });
+  }
+  const plan = planPrismsIn(site, grid, b, rf, inp.eave, inp.maxHeight);
+  const D = inp.lowRise ? 4 : 8;
+  const spacing = inp.lowRise ? 1 : 2;
+  // 算定位置: 対象の辺（道路なら反対側の線）を真北へ D 動かした線上
+  const shift = (isRoad ? roadW(inp.edgeIndex) : 0) + D;
+  const aR = toLocal(rf, a), cR = toLocal(rf, c);
+  const nDiv = Math.max(1, Math.ceil(rf.len / spacing - 1e-9));
+  const pts: Pt[] = [];
+  for (let i = 0; i <= nDiv; i++) { const t = i / nDiv; pts.push({ x: aR.x + (cR.x - aR.x) * t, y: aR.y + (cR.y - aR.y) * t + shift }); }
+  if (isRoad) note.push(`北側が道路（幅 ${roadW(inp.edgeIndex)}m）のため、道路の反対側の線から ${D}m 北に算定位置を置いています`);
+  const r = evalPoints(conform, plan, pts, nAz, nAlt);
+  return { ok: r.points.every((p) => p.ok), points: r.points, worst: r.worst, diagram: r.diagram, info: { roadW: isRoad ? roadW(inp.edgeIndex) : 0, back: 0, applyDist: D, slope, pitch: rf.len / nDiv, note: [`算定位置は境界線の ${D}m 北、間隔 ${(rf.len / nDiv).toFixed(2)}m（${conform.length} 帯で近似）`, ...note] } };
+}

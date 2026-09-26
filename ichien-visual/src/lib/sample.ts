@@ -253,7 +253,7 @@ export function lessonProject1(): Project {
 
 /**
  * 教材2: 横浜市戸塚区深谷町（建売・イーカム設計、確定図 2025年6月19日）。測量図なし。
- * 敷地は配置図の求積表（Xn=南北, Yn=東西）から。敷地面積 110.50㎡。準住居地域・準防火・第4種高度地区・宅造規制区域。
+ * 敷地は配置図の求積表（Xn=南北, Yn=東西）から。敷地面積 110.50㎡。準住居地域・準防火・第4種高度地区（横浜市告示: 20m・北側 7.5m＋0.6L、北側道路は幅の1/2緩和）・宅造規制区域。
  * 道路: 法42条1項5号（認定幅員4.5m）。敷地は北辺10.25mのうち東側4.25mだけ道路に接する。
  * 建物: 2階建て L形（建築面積54.33）。ここでは外接矩形 9.10×6.37 で近似。最高高さ 8.261、最高軒高 6.100、1FL +581。
  * 設計事務所の判定: 建ぺい率 49.17%（≦60）、容積率 90.67%（≦180、道路幅員 4.5×0.4）、道路斜線・高度斜線とも支障なし。
@@ -297,8 +297,9 @@ export function lessonProject2(): Project {
         neighborSlope: 1.25,
         kodoEnabled: true,
         kodoPresetId: "yokohama-4",
-        kodoSegs: [],
-        kodoAbsolute: 0,
+        kodoSegs: [{ from: 0, upTo: null, base: 7.5, slope: 0.6 }],
+        kodoAbsolute: 20,
+        kodoRoadHalf: true,
         absoluteMax: 0,
         skyEnabled: true,
       },
