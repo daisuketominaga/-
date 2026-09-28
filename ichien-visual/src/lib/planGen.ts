@@ -62,7 +62,8 @@ export function validatePlan(b: PBuilding, floors: PFloor[], roadFace: string, p
       }
     }
     for (let i = 0; i < f.rooms.length; i++) for (let j = i + 1; j < f.rooms.length; j++) if (f.rooms[i].type !== "balcony" && f.rooms[j].type !== "balcony" && overlaps(f.rooms[i], f.rooms[j])) issues.push(`${f.level}F ${f.rooms[i].name}(${f.rooms[i].id}) と ${f.rooms[j].name}(${f.rooms[j].id}) が重なっている`);
-    const covered = f.rooms.filter((r) => r.type !== "balcony").reduce((s, r) => s + r.w * r.d, 0);
+    // 隙間の検査ではバルコニーも「埋まっている」扱い（外形の中に置く決まりなので）
+    const covered = f.rooms.reduce((s, r) => s + r.w * r.d, 0);
     const fpArea = b.w * b.d - (b.notches ?? []).reduce((s, n) => s + n.w * n.d, 0);
     if (covered < fpArea - 0.5) issues.push(`${f.level}F に隙間が ${(fpArea - covered).toFixed(2)}㎡（約 ${toCells(toCells(fpArea - covered))} マス）残っている。廊下や収納で埋める`);
   }
