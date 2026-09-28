@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
 import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
 import { roomGroups, groupOutline, mergeWithNeighbors, touchLength } from "@/lib/roomGroups";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
-import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf } from "@/lib/geometry";
+import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf, floorAreaOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { siteInBuildingFrame, clearances, type SiteContext } from "@/lib/grid";
 import FixtureSchedule from "./FixtureSchedule";
@@ -232,7 +232,7 @@ export default function FloorPlan({ project, setProject }: Props) {
     }
   };
 
-  const floorArea = (f: Floor) => f.rooms.filter((r) => r.type !== "balcony").reduce((a, r) => a + r.w * r.d, 0);
+  const floorArea = (f: Floor) => floorAreaOf(building, f.rooms);
   const balconyArea = (f: Floor) => f.rooms.filter((r) => r.type === "balcony").reduce((a, r) => a + r.w * r.d, 0);
   const total = project.floors.reduce((a, f) => a + floorArea(f), 0);
   const siteArea = project.site.areaOverride ?? 0;

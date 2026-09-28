@@ -1,3 +1,4 @@
+import { floorAreaOf } from "./geometry";
 import type { CostInput, Project } from "./types";
 import { TSUBO_M2 } from "./types";
 
@@ -21,7 +22,7 @@ export type CostResult = {
 };
 
 export function totalFloorArea(project: Project) {
-  return project.floors.reduce((a, f) => a + f.rooms.filter((r) => r.type !== "balcony").reduce((s, r) => s + r.w * r.d, 0), 0);
+  return project.floors.reduce((a, f) => a + floorAreaOf(project.building, f.rooms), 0);
 }
 
 /** 概算（万円）。単価が空なら建築費は null（計算しない）。すべて利用者が入れた単価による */

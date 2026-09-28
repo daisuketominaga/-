@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import type { Project } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { round, roadFaceOf, footprintArea } from "@/lib/geometry";
+import { round, roadFaceOf, footprintArea, floorAreaOf } from "@/lib/geometry";
 import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
@@ -26,7 +26,7 @@ export default function PrintView({ project, setProject }: Props) {
   const floorsRef = useRef<SVGSVGElement>(null);
   const elevRef = useRef<SVGSVGElement>(null);
   const b = project.building;
-  const floorArea = (f: Project["floors"][number]) => f.rooms.filter((r) => r.type !== "balcony").reduce((a, r) => a + r.w * r.d, 0);
+  const floorArea = (f: Project["floors"][number]) => floorAreaOf(b, f.rooms);
   const balconyArea = (f: Project["floors"][number]) => f.rooms.filter((r) => r.type === "balcony").reduce((a, r) => a + r.w * r.d, 0);
   const total = project.floors.reduce((a, f) => a + floorArea(f), 0);
   const bedrooms = project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "bedroom" || r.type === "japanese").length;

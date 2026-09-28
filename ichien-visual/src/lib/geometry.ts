@@ -462,3 +462,25 @@ export function buildingSolids(b: Building, eave: number, rise: number, maxHeigh
   }
   return out;
 }
+
+/**
+ * 階の床面積: 部屋（バルコニー以外）が占める範囲の「合計」ではなく「和」を、建物外形（切り欠き後）の内側で数える。
+ * 階段下のトイレのように部屋を重ねても二重に数えず、切り欠きにはみ出した分も数えない。
+ */
+export function floorAreaOf(b: Building, rooms: { type: string; x: number; y: number; w: number; d: number }[]): number {
+  const rs = rooms.filter((r) => r.type !== "balcony");
+  if (!rs.length) return 0;
+  const h = 0.2275; // 半マスの半分で刻む
+  const nx = Math.round(b.w / h), ny = Math.round(b.d / h);
+  if (nx <= 0 || ny <= 0 || nx * ny > 40000) return rs.reduce((s, r) => s + r.w * r.d, 0);
+  let n = 0;
+  for (let j = 0; j < ny; j++) {
+    const cy = (j + 0.5) * h;
+    for (let i = 0; i < nx; i++) {
+      const cx = (i + 0.5) * h;
+      if (!insideFootprint(b, cx, cy)) continue;
+      if (rs.some((r) => cx > r.x && cx < r.x + r.w && cy > r.y && cy < r.y + r.d)) n++;
+    }
+  }
+  return n * h * h;
+}
