@@ -10,6 +10,7 @@ const SYSTEM = `あなたは日本の木造住宅の間取りを設計する建�
 - 各部屋は矩形 {id, name, type, x, y, w, d}。必ず 0 ≤ x, x+w ≤ 建物幅（マス）、0 ≤ y, y+d ≤ 建物奥行（マス）。
 - 【910mm モジュール厳守】x, y, w, d は原則 整数（マス数）。0.5（半マス）を使ってよいのは type が hall（廊下・ホール）, toilet, washroom, closet, storage, stairs, entrance の部屋だけ。ldk, living, kitchen, bedroom, japanese, study, bath, garage, balcony, other の x, y, w, d は必ず整数。
 - 幅や奥行が奇数マス（例: 7）のときは 3+4 のように整数で分ける。3.5+3.5 のように半分にしない。
+- 半マス（0.5）を使う部屋は、隣の整数マス部屋を半マスずらさないように組む。例: トイレ 1×1.5 と収納 1×0.5 を縦に並べて 2 マスにする、洗面 2×1.5 と収納 2×0.5 で 2 マスにする。浴室・LDK・洋室・ガレージの x, y が 0.5 端数になる配置は禁止。
 - 部屋同士は重ならないこと。建物内に隙間が残らないよう、廊下や収納で埋める。入力に "notches"（切り欠き＝建物の外の角）があれば、その範囲には部屋を置かない。
 - 階段は全階で同じ位置・同じ大きさにする（type: "stairs"）。直階段は 1×3 マス、回り階段は 2×2 マス。階段には "dir" を必ず付ける（上っていく向き: "up"=奥へ, "down"=底辺(道路)側へ, "left", "right"）。"stairKind" は "straight" / "u_turn" / "l_turn"。既存の stairKind と turn は変えない。段の長手方向と dir を一致させる（dir が up/down なら d > w、left/right なら w > d）。
 - バルコニーは type "balcony" で建物外形の中に置く（床面積には含めない）。
@@ -43,6 +44,102 @@ const inNotch = (b: PBuilding, x: number, y: number) =>
     const y0 = n.corner.startsWith("S") ? 0 : b.d - n.d;
     return x > x0 + 1e-6 && x < x0 + n.w - 1e-6 && y > y0 + 1e-6 && y < y0 + n.d - 1e-6;
   });
+
+/** 部屋の大きさからユニットバスの呼び寸法を決める */
+export function bathSizeOf(w: number, d: number): string {
+  const a = Math.min(w, d), c = Math.max(w, d);
+  if (a >= 2.2) return "1818";
+  if (a >= 1.8 && c >= 2.2) return "1620";
+  if (a >= 1.8) return "1616";
+  return "1216";
+}
+
+/** 同じ名前・種類の矩形が複数あるとき、その合計範囲を「なるべく大きな矩形が少ない数」で切り直す（L 字の LDK を細切れにしない） */
+export function mergeRooms(rooms: PRoom[]): PRoom[] {
+  const h = U / 2;
+  const groups = new Map<string, PRoom[]>();
+  for (const r of rooms) {
+    const key = r.type === "stairs" ? `#${r.id}` : `${r.type}|${r.name}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  const out: PRoom[] = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) {
+      out.push(...g);
+      continue;
+    }
+    const x0 = Math.min(...g.map((r) => r.x)), y0 = Math.min(...g.map((r) => r.y));
+    const x1 = Math.max(...g.map((r) => r.x + r.w)), y1 = Math.max(...g.map((r) => r.y + r.d));
+    const nx = Math.round((x1 - x0) / h), ny = Math.round((y1 - y0) / h);
+    if (nx * ny > 4000) {
+      out.push(...g);
+      continue;
+    }
+    const cell: boolean[][] = [];
+    for (let j = 0; j < ny; j++) {
+      cell.push([]);
+      for (let i = 0; i < nx; i++) {
+        const cx = x0 + (i + 0.5) * h, cy = y0 + (j + 0.5) * h;
+        cell[j].push(g.some((r) => cx > r.x && cx < r.x + r.w && cy > r.y && cy < r.y + r.d));
+      }
+    }
+    const rects: PRoom[] = [];
+    for (let guard = 0; guard < 50; guard++) {
+      // いちばん大きい空き矩形を探す
+      let best: { i: number; j: number; w: number; d: number; area: number } | null = null;
+      for (let j = 0; j < ny; j++)
+        for (let i = 0; i < nx; i++) {
+          if (!cell[j][i]) continue;
+          let maxW = 0;
+          while (i + maxW < nx && cell[j][i + maxW]) maxW++;
+          for (let d = 1; j + d <= ny; d++) {
+            let w = 0;
+            while (w < maxW && cell[j + d - 1][i + w]) w++;
+            maxW = w;
+            if (w === 0) break;
+            if (!best || w * d > best.area) best = { i, j, w, d, area: w * d };
+          }
+        }
+      if (!best) break;
+      for (let jj = best.j; jj < best.j + best.d; jj++) for (let ii = best.i; ii < best.i + best.w; ii++) cell[jj][ii] = false;
+      const src = g[rects.length] ?? g[0];
+      rects.push({ ...src, id: rects.length === 0 ? g[0].id : src.id === g[0].id ? Math.random().toString(36).slice(2, 9) : src.id, x: +(x0 + best.i * h).toFixed(3), y: +(y0 + best.j * h).toFixed(3), w: +(best.w * h).toFixed(3), d: +(best.d * h).toFixed(3) });
+    }
+    out.push(...(rects.length ? rects : g));
+  }
+  return out;
+}
+
+/** 部屋で埋まっていない場所を収納で埋める（半マス格子で矩形を切り出す） */
+export function fillGaps(b: PBuilding, rooms: PRoom[]): PRoom[] {
+  const h = U / 2;
+  const nx = Math.round(b.w / h), ny = Math.round(b.d / h);
+  if (nx <= 0 || ny <= 0 || nx * ny > 4000) return rooms;
+  const free: boolean[][] = [];
+  for (let j = 0; j < ny; j++) {
+    free.push([]);
+    for (let i = 0; i < nx; i++) {
+      const cx = (i + 0.5) * h, cy = (j + 0.5) * h;
+      const covered = rooms.some((r) => cx > r.x && cx < r.x + r.w && cy > r.y && cy < r.y + r.d);
+      free[j].push(!covered && !inNotch(b, cx, cy));
+    }
+  }
+  const added: PRoom[] = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      if (!free[j][i]) continue;
+      // 右へ伸ばし、次に下（奥）へ伸ばす
+      let w = 1;
+      while (i + w < nx && free[j][i + w]) w++;
+      let d = 1;
+      while (j + d < ny && free[j + d].slice(i, i + w).every(Boolean)) d++;
+      for (let jj = j; jj < j + d; jj++) for (let ii = i; ii < i + w; ii++) free[jj][ii] = false;
+      if (w * d < 2) continue; // 1/4 マス未満の欠片は無視
+      added.push({ id: Math.random().toString(36).slice(2, 9), name: "収納", type: "storage", x: +(i * h).toFixed(3), y: +(j * h).toFixed(3), w: +(w * h).toFixed(3), d: +(d * h).toFixed(3) });
+    }
+  }
+  return [...rooms, ...added];
+}
 
 /** 生成した間取りを機械的に検査する（メートル単位）。空なら合格 */
 export function validatePlan(b: PBuilding, floors: PFloor[], roadFace: string, parking: string): string[] {
@@ -167,7 +264,7 @@ export async function generatePlan(body: PlanRequest) {
           type: String(r.type || "other"),
           ...(String(r.type) === "stairs" ? { dir: dir ?? "up", stairKind: ["straight", "u_turn", "l_turn"].includes(String(r.stairKind)) ? String(r.stairKind) : "straight", ...(r.turn ? { turn: String(r.turn) === "right" ? "right" : "left" } : {}) } : {}),
           ...(String(r.type) === "washroom" ? { vanity: [600, 750, 900, 1200, 1650].includes(Number(r.vanity)) ? Number(r.vanity) : w >= 1.8 ? 1650 : 750 } : {}),
-          ...(String(r.type) === "bath" ? { bathSize: typeof r.bathSize === "string" && /^\d{4}$/.test(r.bathSize) ? r.bathSize : w >= 1.8 && d >= 1.8 ? "1616" : "1216" } : {}),
+          ...(String(r.type) === "bath" ? { bathSize: bathSizeOf(w, d) } : {}),
           x: +x.toFixed(3),
           y: +y.toFixed(3),
           w: +w.toFixed(3),
@@ -183,27 +280,33 @@ export async function generatePlan(body: PlanRequest) {
   let issues = validatePlan(b, floors, roadFace, parking);
   let usage = r.usage;
   let repaired = false;
-  // 機械検査で引っかかったら、その指摘を渡して 1 回だけ直させる
-  if (issues.length && mode === "generate") {
+  // 機械検査で引っかかったら、その指摘を渡して直させる（最大 2 回、思考なしで速く）
+  let history: Anthropic.MessageParam[] = messages;
+  for (let round = 0; round < 2 && issues.length && mode === "generate"; round++) {
     const fixMsg: Anthropic.MessageParam[] = [
-      ...messages,
+      ...history,
       { role: "assistant", content: r.text },
-      { role: "user", content: `上の間取りを機械的に検査したところ、次の問題がありました。すべて直した完全な JSON（全階）をもう一度返してください。座標はマス単位のままです。\n- ${issues.join("\n- ")}` },
+      { role: "user", content: `上の間取りを機械的に検査したところ、次の問題がありました。すべて直した完全な JSON（全階・全部屋）をもう一度返してください。座標はマス単位のままです。\n- ${issues.join("\n- ")}` },
     ];
     try {
-      const r2 = await call(fixMsg, "off"); // 直しは考えずに速く
+      const r2 = await call(fixMsg, "off");
       const floors2 = toMeters(r2.json);
       const issues2 = validatePlan(b, floors2, roadFace, parking);
+      usage = { ...usage, input_tokens: usage.input_tokens + r2.usage.input_tokens, output_tokens: usage.output_tokens + r2.usage.output_tokens } as typeof usage;
       if (issues2.length <= issues.length) {
+        history = fixMsg;
         r = r2;
         floors = floors2;
         issues = issues2;
         repaired = true;
-      }
-      usage = { ...usage, input_tokens: usage.input_tokens + r2.usage.input_tokens, output_tokens: usage.output_tokens + r2.usage.output_tokens } as typeof usage;
+      } else break;
     } catch (e) {
       console.warn("plan repair failed", (e as Error).message);
+      break;
     }
   }
+  // 仕上げ: 同じ部屋の細切れをまとめ、残った隙間は収納で埋める（決定的な処理）
+  floors = floors.map((f) => ({ ...f, rooms: fillGaps(b, mergeRooms(f.rooms)) }));
+  issues = validatePlan(b, floors, roadFace, parking);
   return { floors, notes: r.json.notes, issues, repaired, usage };
 }
