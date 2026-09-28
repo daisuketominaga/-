@@ -396,6 +396,31 @@ export default function FloorPlan({ project, setProject }: Props) {
               ))}
             </div>
           </div>
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="text-slate-600">階数</span>
+            {[1, 2, 3].map((n) => (
+              <button
+                key={n}
+                className={`rounded px-2 py-0.5 ${building.floors === n ? "bg-slate-800 text-white" : "bg-slate-100 hover:bg-slate-200"}`}
+                title={n === 1 ? "平屋にする" : `${n}階建てにする`}
+                onClick={() => {
+                  if (n === building.floors) return;
+                  const gone = project.floors.filter((f) => f.level > n && f.rooms.length > 0);
+                  if (gone.length && !confirm(`${gone.map((f) => `${f.level}階`).join("・")}の部屋（${gone.reduce((c, f) => c + f.rooms.length, 0)}室）が消えます。${n === 1 ? "平屋" : `${n}階建て`}にしますか？`)) return;
+                  setProject((p) => {
+                    const fh = [...p.building.floorHeights];
+                    while (fh.length < n) fh.push(fh[fh.length - 1] ?? 2.4);
+                    return { ...p, building: { ...p.building, floors: n, floorHeights: fh }, floors: p.floors.filter((f) => f.level <= n) };
+                  });
+                  if (level > n) setLevel(n);
+                  setSel(null);
+                  setMsg(`${n === 1 ? "平屋" : `${n}階建て`}にしました。参考プランを作り直すと階数に合わせた間取りになります`);
+                }}
+              >
+                {n === 1 ? "平屋" : `${n}階建て`}
+              </button>
+            ))}
+          </div>
           <div>
             <div className="mb-1 text-[11px] font-medium text-slate-600">部屋（図へドラッグして置く）</div>
             <div className="flex flex-wrap gap-1">

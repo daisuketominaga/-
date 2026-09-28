@@ -218,7 +218,7 @@ export async function generatePlan(body: PlanRequest) {
   const proj = project as { building: PBuilding & { floors?: number }; floors?: PFloor[]; site?: unknown };
   const b = proj.building;
   const floorsN = b.floors ?? 2;
-  const defaultReq = floorsN >= 3 ? "1階に玄関・水回り（浴室1616・洗面・トイレ）・個室またはガレージ、2階にLDK（16帖以上）とトイレ、3階に個室2〜3室とバルコニー" : "1階に玄関・LDK・水回り（浴室1616・洗面・トイレ）、2階に個室3室・トイレ・バルコニー";
+  const defaultReq = floorsN <= 1 ? "平屋: 1階に玄関・LDK（16帖以上）・水回り（浴室1616・洗面・トイレ）・個室2〜3室。階段は置かない" : floorsN >= 3 ? "1階に玄関・水回り（浴室1616・洗面・トイレ）・個室またはガレージ、2階にLDK（16帖以上）とトイレ、3階に個室2〜3室とバルコニー" : "1階に玄関・LDK・水回り（浴室1616・洗面・トイレ）、2階に個室3室・トイレ・バルコニー";
 
   // モデルには「マス」単位で渡す（910mm モジュールを守りやすくするため）
   const cellsInput = {
