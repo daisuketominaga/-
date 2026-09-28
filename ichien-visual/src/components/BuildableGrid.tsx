@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
 import { insetPolygon, round, polygonArea, northScreenDeg, footprintArea, notchesOf, footprintPolygon } from "@/lib/geometry";
-import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, footprintFits, maxStair, modules, clearances, roadBands } from "@/lib/grid";
+import { baseFrame, toLocal, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape, shapeToCells } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -23,6 +23,10 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const svgRef = useRef<SVGSVGElement>(null);
   const flip = !!grid.flip;
 
+  const unit = grid.unit && grid.unit > 0 ? grid.unit : HALF;
+  const snap = (v: number) => round(Math.round(v / unit) * unit, 4);
+  /** 基準値 base の端数（unit で割った余り）を保って丸める */
+  const snapKeep = (v: number, base: number) => { const ph = base - Math.round(base / unit) * unit; return round(Math.round((v - ph) / unit) * unit + ph, 4); };
   const frame = useMemo(() => baseFrame(site, grid.baseEdge), [site, grid.baseEdge]);
   const setback = site.fireproofException ? 0 : site.setback;
   const inner = useMemo(() => (setback > 0 ? insetPolygon(site.points, setback) : site.points), [site.points, setback]);
@@ -62,11 +66,12 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
         ...p.grid,
         ...(patch.baseEdge !== undefined ? { baseEdge: patch.baseEdge } : {}),
         ...(patch.flip !== undefined ? { flip: patch.flip } : {}),
-        ...(patch.u !== undefined ? { u: snapHalf(patch.u) } : {}),
-        ...(patch.v !== undefined ? { v: snapHalf(patch.v) } : {}),
+        // 位置は「今の位置の端数（離れ線に揃えた 0.6 など）」を保ったまま unit 刻みで動かす
+        ...(patch.u !== undefined ? { u: snapKeep(patch.u, p.grid.u) } : {}),
+        ...(patch.v !== undefined ? { v: snapKeep(patch.v, p.grid.v) } : {}),
       };
-      const w = patch.w !== undefined ? Math.max(HALF, snapHalf(patch.w)) : p.building.w;
-      const d = patch.d !== undefined ? Math.max(HALF, snapHalf(patch.d)) : p.building.d;
+      const w = patch.w !== undefined ? Math.max(unit, snap(patch.w)) : p.building.w;
+      const d = patch.d !== undefined ? Math.max(unit, snap(patch.d)) : p.building.d;
       return { ...p, grid: g, building: buildingFromGrid(p.site, g, w, d, p.building) };
     });
 
@@ -74,9 +79,9 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
 
   /** 階段状の最大範囲: 底辺を離れ線に揃え、入るマスを全部拾う */
   const autoStair = () => {
-    const r = maxStair(site, grid.baseEdge, setback, ((grid.u % HALF) + HALF) % HALF);
+    const r = maxStair(site, grid.baseEdge, setback, ((grid.u % unit) + unit) % unit, unit);
     if (r.cells === 0) {
-      alert("離れ線の内側に455mm角が1つも入りません。離れの設定か境界点を確認してください。");
+      alert(`離れ線の内側に${Math.round(unit * 1000)}mm角が1つも入りません。離れの設定か境界点を確認してください。`);
       return;
     }
     setProject((p) => {
@@ -88,30 +93,99 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const autoMax = () => {
     const best = maxRect(site, grid.baseEdge, setback);
     if (best.area === 0) {
-      alert("離れ線の内側に455mm角が1つも入りません。離れの設定か境界点を確認してください。");
+      alert(`離れ線の内側に${Math.round(unit * 1000)}mm角が1つも入りません。離れの設定か境界点を確認してください。`);
       return;
     }
     apply({ u: best.u, v: best.v, w: best.w, d: best.d });
   };
 
+  // ---- ドラッグ操作（移動・辺の伸縮・マスの追加/削除）
+  const [mode, setMode] = useState<"move" | "cells">("move");
+  const dragRef = useRef<
+    | { kind: "move"; su: number; sv: number; ou: number; ov: number }
+    | { kind: "edge"; edge: "left" | "right" | "top" | "bottom"; su: number; sv: number; ou: number; ov: number; ow: number; od: number }
+    | { kind: "cells"; add: boolean; cells: Set<string>; ou: number; ov: number; last: string }
+    | null
+  >(null);
+  const pointerToUV = (e: { clientX: number; clientY: number }) => {
+    const svg = svgRef.current!;
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse());
+    return { u: flip ? maxU - pt.x / PX : minU + pt.x / PX, v: flip ? minV + pt.y / PX : maxV - pt.y / PX };
+  };
+  const applyCells = (cells: Set<string>, ou: number, ov: number) => {
+    const r = cellsToShape(cells, unit);
+    if (!r.cells) return;
+    setProject((p) => {
+      const g = { ...p.grid, u: round(ou + r.u, 4), v: round(ov + r.v, 4) };
+      return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
+    });
+  };
+  const cellKeyAt = (uv: { u: number; v: number }, ou: number, ov: number) => `${Math.floor((uv.u - ou) / unit)},${Math.floor((uv.v - ov) / unit)}`;
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (readOnly) return;
+    const uv = pointerToUV(e);
+    const target = e.target as SVGElement;
+    const handle = target.getAttribute("data-handle") as "left" | "right" | "top" | "bottom" | null;
+    if (mode === "cells") {
+      const cells = shapeToCells(building, unit);
+      const key = cellKeyAt(uv, grid.u, grid.v);
+      const add = !cells.has(key);
+      if (add) cells.add(key); else cells.delete(key);
+      dragRef.current = { kind: "cells", add, cells, ou: grid.u, ov: grid.v, last: key };
+      applyCells(cells, grid.u, grid.v);
+      (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+      return;
+    }
+    if (handle) {
+      dragRef.current = { kind: "edge", edge: handle, su: uv.u, sv: uv.v, ou: grid.u, ov: grid.v, ow: building.w, od: building.d };
+      (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+      return;
+    }
+    if (target.getAttribute("data-building") === "1") {
+      dragRef.current = { kind: "move", su: uv.u, sv: uv.v, ou: grid.u, ov: grid.v };
+      (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+    }
+  };
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const uv = pointerToUV(e);
+    if (d.kind === "move") {
+      apply({ u: d.ou + uv.u - d.su, v: d.ov + uv.v - d.sv });
+    } else if (d.kind === "edge") {
+      const du = uv.u - d.su, dv = uv.v - d.sv;
+      if (d.edge === "right") apply({ w: d.ow + du });
+      else if (d.edge === "top") apply({ d: d.od + dv });
+      else if (d.edge === "left") { const nu = snapKeep(d.ou + du, d.ou); apply({ u: nu, w: d.ow + (d.ou - nu) }); }
+      else { const nv = snapKeep(d.ov + dv, d.ov); apply({ v: nv, d: d.od + (d.ov - nv) }); }
+    } else {
+      const key = cellKeyAt(uv, d.ou, d.ov);
+      if (key === d.last) return;
+      d.last = key;
+      if (d.add) d.cells.add(key); else d.cells.delete(key);
+      applyCells(d.cells, d.ou, d.ov);
+    }
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
   // グリッド線の範囲
   const gu0 = Math.floor(minU / MODULE) * MODULE;
   const uLines: number[] = [];
-  for (let u = gu0; u <= maxU; u += HALF) uLines.push(round(u, 3));
+  for (let u = gu0; u <= maxU; u += unit) uLines.push(round(u, 4));
   const vLines: number[] = [];
-  for (let v = 0; v <= maxV; v += HALF) vLines.push(round(v, 3));
-  for (let v = -HALF; v >= minV; v -= HALF) vLines.push(round(v, 3));
+  for (let v = 0; v <= maxV; v += unit) vLines.push(round(v, 4));
+  for (let v = -unit; v >= minV; v -= unit) vLines.push(round(v, 4));
 
   const edgeLabel = (i: number) => `P${i + 1}→P${((i + 1) % site.points.length) + 1}${site.edges.find((e) => e.index === i)?.road ? "（道路）" : ""}`;
   const mm = (m: number | null) => (m === null ? "－" : `${Math.round(m * 1000).toLocaleString()}`);
 
-  const Stepper = ({ label, value, onChange, min = HALF }: { label: string; value: number; onChange: (v: number) => void; min?: number }) => (
+  const Stepper = ({ label, value, onChange, min = unit }: { label: string; value: number; onChange: (v: number) => void; min?: number }) => (
     <div className="flex items-center justify-between rounded border border-slate-200 px-2 py-1">
       <span className="text-xs text-slate-600">{label}</span>
       <div className="flex items-center gap-1">
-        <button className="btn-ghost px-2 py-0.5" onClick={() => onChange(Math.max(min, value - HALF))}>－</button>
+        <button className="btn-ghost px-2 py-0.5" onClick={() => onChange(Math.max(min, value - unit))}>－</button>
         <span className="w-24 text-center text-sm font-medium">{value.toFixed(3)} m</span>
-        <button className="btn-ghost px-2 py-0.5" onClick={() => onChange(value + HALF)}>＋</button>
+        <button className="btn-ghost px-2 py-0.5" onClick={() => onChange(value + unit)}>＋</button>
       </div>
     </div>
   );
@@ -155,7 +229,20 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
         </div>
 
         <div className="card space-y-2">
-          <h3 className="text-sm font-semibold">2. 建物の枠（455mm刻み）</h3>
+          <h3 className="text-sm font-semibold">2. 建物の枠（{Math.round(unit * 1000 * 10) / 10}mm刻み）</h3>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">最小単位</span>
+            <select className="field w-auto px-1 py-0.5" value={unit} onChange={(e) => setProject((p) => ({ ...p, grid: { ...p.grid, unit: Number(e.target.value) } }))}>
+              <option value={MODULE}>910mm（1マス）</option>
+              <option value={HALF}>455mm（半マス）</option>
+              <option value={0.2275}>227.5mm（1/4マス）</option>
+            </select>
+          </div>
+          <div className="flex gap-1 text-xs">
+            <button className={`flex-1 rounded px-2 py-1 ${mode === "move" ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setMode("move")}>動かす・伸ばす</button>
+            <button className={`flex-1 rounded px-2 py-1 ${mode === "cells" ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setMode("cells")}>マスを足す・消す</button>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-500">{mode === "move" ? "図の建物をドラッグで移動、辺の□をドラッグで伸縮できます。" : "図のマスをクリック／ドラッグで、建物にマスを足したり消したりできます（角の切り欠きで表せる階段形に丸めます）。"}</p>
           <Stepper label="幅（底辺に沿って）" value={building.w} onChange={(v) => apply({ w: v })} />
           <Stepper label="奥行（底辺から内側へ）" value={building.d} onChange={(v) => apply({ d: v })} />
           <Stepper label="位置：底辺の始点から" value={grid.u} onChange={(v) => apply({ u: v })} min={-50} />
@@ -174,8 +261,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             {(building.notches ?? []).map((n, i) => (
               <div key={i} className="rounded bg-slate-50 p-1 text-xs">
                 <div className="flex items-center justify-between"><b>{CORNER_LABEL[n.corner]}</b><button className="btn-ghost px-2 py-0 text-red-500" onClick={() => setNotches((building.notches ?? []).filter((_, j) => j !== i))}>✕</button></div>
-                <Stepper label="幅方向" value={n.w} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, w: Math.min(Math.max(HALF, snapHalf(v)), building.w - HALF) } : x)))} />
-                <Stepper label="奥行方向" value={n.d} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, d: Math.min(Math.max(HALF, snapHalf(v)), building.d - HALF) } : x)))} />
+                <Stepper label="幅方向" value={n.w} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, w: Math.min(Math.max(unit, snap(v)), building.w - unit) } : x)))} />
+                <Stepper label="奥行方向" value={n.d} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, d: Math.min(Math.max(unit, snap(v)), building.d - unit) } : x)))} />
               </div>
             ))}
             {!(building.notches ?? []).length && <p className="text-[11px] text-slate-500">矩形以外の建物は、外接する枠を決めてから角を切り欠きます。建築面積・斜線・天空率・日影は切り欠き後の形で計算します。</p>}
@@ -198,7 +285,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_建築可能範囲.png`)}>PNG保存</button>
         </div>
         <div className="card overflow-auto p-2">
-          <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="mx-auto max-h-[78vh] w-full select-none" style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif" }}>
+          <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className={`mx-auto max-h-[78vh] w-full select-none ${!readOnly && mode === "cells" ? "cursor-crosshair" : ""}`} style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif", touchAction: readOnly ? undefined : "none" }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
             <defs>
               <marker id="dimE" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#c0392b" /></marker>
               <marker id="dimS" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 z" fill="#c0392b" /></marker>
@@ -230,11 +317,27 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             {setback > 0 && <polygon points={innerLoc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")} fill="none" stroke="#c0392b" strokeWidth={1.2} strokeDasharray="6 4" />}
             {/* 建物の枠 */}
             {notches.length > 0 && <rect x={Math.min(X(bu), X(bu + bw))} y={Math.min(Y(bv), Y(bv + bd))} width={bw * PX} height={bd * PX} fill="none" stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={1} strokeDasharray="4 3" />}
-            <polygon points={footprintPolygon(building).map((q) => `${X(bu + q.x)},${Y(bv + q.y)}`).join(" ")} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} strokeLinejoin="round" />
-            <text x={X(bu + bw / 2)} y={Y(bv + bd / 2)} textAnchor="middle" fontSize={14} fontWeight={700} fill={fits ? "#1d479c" : "#c0392b"}>
+            <polygon data-building="1" points={footprintPolygon(building).map((q) => `${X(bu + q.x)},${Y(bv + q.y)}`).join(" ")} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} strokeLinejoin="round" style={{ cursor: readOnly ? undefined : mode === "cells" ? "crosshair" : "move" }} />
+            {/* マス編集モード: 枠の周り1マスまで薄く表示（クリックで追加） */}
+            {!readOnly && mode === "cells" && (() => {
+              const cells = shapeToCells(building, unit);
+              const ni = Math.round(building.w / unit), nj = Math.round(building.d / unit);
+              const out: React.ReactNode[] = [];
+              for (let i = -1; i <= ni; i++) for (let j = -1; j <= nj; j++) {
+                const inside = cells.has(`${i},${j}`);
+                const u = bu + i * unit, v = bv + j * unit;
+                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={inside ? "rgba(47,111,237,0.08)" : "rgba(47,111,237,0.03)"} stroke="rgba(47,111,237,0.35)" strokeWidth={0.6} style={{ pointerEvents: "none" }} />);
+              }
+              return out;
+            })()}
+            {/* 辺のハンドル（ドラッグで伸縮） */}
+            {!readOnly && mode === "move" && ([["left", bu, bv + bd / 2], ["right", bu + bw, bv + bd / 2], ["bottom", bu + bw / 2, bv], ["top", bu + bw / 2, bv + bd]] as const).map(([h, hu, hv]) => (
+              <rect key={h} data-handle={h} x={X(hu) - 7} y={Y(hv) - 7} width={14} height={14} rx={3} fill="#fff" stroke="#2f6fed" strokeWidth={2} style={{ cursor: h === "left" || h === "right" ? "ew-resize" : "ns-resize" }} />
+            ))}
+            <text x={X(bu + bw / 2)} y={Y(bv + bd / 2)} textAnchor="middle" fontSize={14} fontWeight={700} fill={fits ? "#1d479c" : "#c0392b"} style={{ pointerEvents: "none" }}>
               {modules(building.w)}×{modules(building.d)}マス
             </text>
-            <text x={X(bu + bw / 2)} y={Y(bv + bd / 2) + 18} textAnchor="middle" fontSize={11} fill="#1d479c">
+            <text x={X(bu + bw / 2)} y={Y(bv + bd / 2) + 18} textAnchor="middle" fontSize={11} fill="#1d479c" style={{ pointerEvents: "none" }}>
               {building.w.toFixed(2)}m × {building.d.toFixed(2)}m{notches.length ? "（切り欠き後）" : " ＝"} {round(bArea, 2)}m²
             </text>
             {/* 境界までの寸法 */}
