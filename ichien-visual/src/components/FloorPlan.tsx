@@ -332,7 +332,8 @@ export default function FloorPlan({ project, setProject }: Props) {
           return { ...f, rooms, fixtures };
         }),
       }));
-      setMsg(json.notes || "更新しました");
+      const issues = (json.issues as string[] | undefined) ?? [];
+      setMsg((json.notes || "更新しました") + (issues.length ? `\n自動検査で残った注意 ${issues.length} 件（手で直してください）: ${issues.slice(0, 4).join(" ／ ")}${issues.length > 4 ? " …" : ""}` : "\n自動検査（910mm・重なり・隙間・玄関とガレージの向き）は合格です"));
       setInstruction("");
     } catch (e) {
       setMsg("エラー: " + (e as Error).message);
@@ -494,7 +495,7 @@ export default function FloorPlan({ project, setProject }: Props) {
             </button>
           </div>
           <p className="text-[11px] text-slate-500">上の欄に「1階に和室」「ガレージの横に土間収納」など要望を書いてから押すと、それも反映します。結果は 910mm の線に合わせて作らせていますが、はみ出しや重なり（赤）が出たら手で直してください。</p>
-          {msg && <div className={`text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
+          {msg && <div className={`whitespace-pre-line text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
         </div>
 
         <div className="card text-xs">

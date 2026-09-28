@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { lessonProject3, lessonProject2 } from "@/lib/sample";
-import { roadFaceOf, insideFootprint } from "@/lib/geometry";
-import type { Project, Room } from "@/lib/types";
+import { roadFaceOf } from "@/lib/geometry";
+import type { Project } from "@/lib/types";
 import { generatePlan } from "@/lib/planGen";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 /**
@@ -28,38 +28,16 @@ export async function GET(req: Request) {
     console.error("plan selftest failed", (e as Error).message, Date.now() - t0, "ms");
     return NextResponse.json({ error: (e as Error).message, ms: Date.now() - t0 }, { status: 500 });
   }
-  console.log("plan selftest generated in", Date.now() - t0, "ms");
+  console.log("plan selftest generated in", Date.now() - t0, "ms", "issues:", json.issues.length);
   const b = p.building;
-  const floors = json.floors as unknown as { level: number; rooms: Room[] }[];
-  const isMod = (v: number) => Math.abs(v / 0.91 - Math.round(v / 0.91)) < 1e-6;
-  const halfOk = (r: Room) => ["hall", "toilet", "washroom", "closet", "storage", "stairs", "entrance"].includes(r.type);
-  const issues: string[] = [];
-  const overlaps = (a: Room, c: Room) => a.x + a.w > c.x + 1e-6 && c.x + c.w > a.x + 1e-6 && a.y + a.d > c.y + 1e-6 && c.y + c.d > a.y + 1e-6;
-  for (const f of floors) {
-    for (const r of f.rooms) {
-      if (![r.x, r.y, r.w, r.d].every(isMod) && !halfOk(r)) issues.push(`${f.level}F ${r.name}: 910mm の倍数でない (${r.x},${r.y},${r.w},${r.d})`);
-      if (r.x < -1e-6 || r.y < -1e-6 || r.x + r.w > b.w + 1e-6 || r.y + r.d > b.d + 1e-6) issues.push(`${f.level}F ${r.name}: はみ出し`);
-      // 切り欠きの中に入っていないか（部屋の中心で判定）
-      if (!insideFootprint(b, r.x + r.w / 2, r.y + r.d / 2)) issues.push(`${f.level}F ${r.name}: 切り欠きにかかる`);
-      if (r.type === "bath" && !(r.w >= 1.36 && r.d >= 1.36)) issues.push(`${f.level}F 浴室が小さい ${r.w}×${r.d}`);
-    }
-    for (let i = 0; i < f.rooms.length; i++) for (let j = i + 1; j < f.rooms.length; j++) if (f.rooms[i].type !== "balcony" && f.rooms[j].type !== "balcony" && overlaps(f.rooms[i], f.rooms[j])) issues.push(`${f.level}F ${f.rooms[i].name} と ${f.rooms[j].name} が重なる`);
-    const covered = f.rooms.filter((r) => r.type !== "balcony").reduce((s, r) => s + r.w * r.d, 0);
-    const fpArea = b.w * b.d - (b.notches ?? []).reduce((s, n) => s + n.w * n.d, 0);
-    if (covered < fpArea - 0.5) issues.push(`${f.level}F 隙間 ${(fpArea - covered).toFixed(2)}㎡`);
-  }
-  const f1 = floors.find((f) => f.level === 1);
-  const touches = (r: Room) => (roadFace === "S" ? r.y < 1e-6 : roadFace === "N" ? r.y + r.d > b.d - 1e-6 : roadFace === "W" ? r.x < 1e-6 : r.x + r.w > b.w - 1e-6);
-  const ent = f1?.rooms.find((r) => r.type === "entrance");
-  if (!ent) issues.push("1F に玄関が無い"); else if (!touches(ent)) issues.push("玄関が道路側の面に接していない");
-  const gar = f1?.rooms.find((r) => r.type === "garage");
-  if (parking.startsWith("builtin")) { if (!gar) issues.push("ビルトインガレージが無い"); else if (!touches(gar)) issues.push("ガレージが道路側に接していない"); else if (Math.max(gar.w, gar.d) < 5.4) issues.push(`ガレージの奥行が足りない ${gar.w}×${gar.d}`); }
+  const floors = json.floors;
+  const issues = json.issues;
   const bath = floors.flatMap((f) => f.rooms).find((r) => r.type === "bath");
   const wash = floors.flatMap((f) => f.rooms).find((r) => r.type === "washroom");
   // 生成に 1 分以上かかるので、結果を CDN に 30 分キャッシュして 2 回目の呼び出しで受け取れるようにする（?run=任意 で作り直し）
   return NextResponse.json({
     case: caseId, parking, roadFace, ms: Date.now() - t0, building: { w: b.w, d: b.d, notches: b.notches },
-    ok: issues.length === 0, issues, notes: json.notes,
+    ok: issues.length === 0, issues, repaired: json.repaired, notes: json.notes,
     bath: bath ? { w: bath.w, d: bath.d, bathSize: bath.bathSize } : null, washroom: wash ? { w: wash.w, d: wash.d, vanity: wash.vanity } : null,
     floors: floors.map((f) => ({ level: f.level, rooms: f.rooms.map((r) => `${r.name}(${r.type}) ${r.x},${r.y} ${r.w}×${r.d}`) })),
     usage: json.usage,
