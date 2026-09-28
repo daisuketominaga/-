@@ -169,7 +169,7 @@ export function roofRise(b: Building) {
 }
 
 export const m2ToTsubo = (m2: number) => m2 / 3.30578;
-export const m2ToTatami = (m2: number) => m2 / 1.62;
+export const m2ToTatami = (m2: number) => m2 / (0.91 * 1.82);
 
 /** 面の外向き法線（世界座標） */
 export function faceNormalWorld(b: Building, face: Face): Pt {

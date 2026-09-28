@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
 import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
+import { roomGroups, groupOutline, mergeWithNeighbors, touchLength } from "@/lib/roomGroups";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
@@ -45,15 +46,9 @@ function wallSegments(b: Building, rooms: Room[]): Wall[] {
   }
   const eps = 1e-6;
   const onOuter = (e: Wall) => walls.some((w) => w.outer && w.along === e.along && (e.along === "h" ? Math.abs(w.y1 - e.y1) < eps && e.x1 >= w.x1 - eps && e.x2 <= w.x2 + eps : Math.abs(w.x1 - e.x1) < eps && e.y1 >= w.y1 - eps && e.y2 <= w.y2 + eps));
-  for (const r of rooms) {
-    if (r.type === "balcony") continue;
-    const edges: Wall[] = [
-      { x1: r.x, y1: r.y, x2: r.x + r.w, y2: r.y, along: "h", outer: false },
-      { x1: r.x, y1: r.y + r.d, x2: r.x + r.w, y2: r.y + r.d, along: "h", outer: false },
-      { x1: r.x, y1: r.y, x2: r.x, y2: r.y + r.d, along: "v", outer: false },
-      { x1: r.x + r.w, y1: r.y, x2: r.x + r.w, y2: r.y + r.d, along: "v", outer: false },
-    ];
-    for (const e of edges) if (!onOuter(e)) walls.push(e);
+  // 同じ名前でつながった部屋（L 字の LDK など）の内側には壁を作らない
+  for (const g of roomGroups(rooms.filter((r) => r.type !== "balcony"))) {
+    for (const e of groupOutline(g)) if (!onOuter({ ...e, outer: false })) walls.push({ ...e, outer: false });
   }
   return walls;
 }
@@ -324,7 +319,9 @@ export default function FloorPlan({ project, setProject }: Props) {
       // 固定した部屋は元のまま戻す。建具は新しい壁の上に残るものだけ残す
       setProject((p) => ({
         ...p,
-        floors: (json.floors as Floor[]).map((f) => {
+        // 返ってこなかった階は元のまま残す（編集で他の階が消えないように）
+        floors: [...p.floors.filter((o) => !(json.floors as Floor[]).some((f) => f.level === o.level)), ...(json.floors as Floor[])].sort((a, b) => a.level - b.level).map((f) => {
+          if (!(json.floors as Floor[]).some((g) => g.level === f.level)) return f;
           const old = p.floors.find((x) => x.level === f.level);
           const keep = (old?.rooms ?? []).filter((r) => fixed?.includes(r.id));
           const rooms = [...f.rooms.filter((r) => !keep.some((k) => k.id === r.id)), ...keep];
@@ -538,8 +535,18 @@ export default function FloorPlan({ project, setProject }: Props) {
               </select>
               <Stepper label="幅" value={selRoom.w} onMinus={() => resizeRoom(selRoom, -HALF, 0)} onPlus={() => resizeRoom(selRoom, HALF, 0)} />
               <Stepper label="奥行" value={selRoom.d} onMinus={() => resizeRoom(selRoom, 0, -HALF)} onPlus={() => resizeRoom(selRoom, 0, HALF)} />
-              <span className="text-slate-500">{round(selRoom.w * selRoom.d, 2)}㎡＝{round((selRoom.w * selRoom.d) / TATAMI_M2, 1)}帖</span>
+              <span className="text-slate-500">{round(selRoom.w * selRoom.d, 2)}㎡＝{round((selRoom.w * selRoom.d) / TATAMI_M2, 1)}帖{selRoom.group && (() => { const g = floor.rooms.filter((r) => r.group === selRoom.group); const a = g.reduce((s, r) => s + r.w * r.d, 0); return <>（合体後 {round(a, 2)}㎡＝{round(a / TATAMI_M2, 1)}帖）</>; })()}</span>
               <button className="btn-ghost py-1" onClick={() => rotateRoom(selRoom.id)}>↻ 90°回す</button>
+              {floor.rooms.some((r) => r.id !== selRoom.id && r.name === selRoom.name && r.type === selRoom.type && r.type !== "stairs" && touchLength(r, selRoom) > 1e-6 && r.group !== (selRoom.group ?? "__none__")) && (
+                <button className="btn-ghost py-1" title="隣り合う同じ名前の部屋と 1 つにする。矩形になるなら 1 つの部屋に、L 字なら内側の壁を消して帖数を合計で表示" onClick={() => {
+                  const res = mergeWithNeighbors(floor.rooms, selRoom.id, uid);
+                  setFloor((f) => ({ ...f, rooms: res.rooms }));
+                  const kept = res.rooms.find((r) => r.id === selRoom.id) ?? res.rooms.find((r) => r.name === selRoom.name);
+                  if (kept) setSel({ kind: "room", id: kept.id });
+                  setMsg(res.rect ? `${res.merged} つの${selRoom.name}を 1 つの部屋にまとめました` : `${res.merged} つの${selRoom.name}を L 字の 1 部屋として表示します（内側の壁なし・帖数は合計）`);
+                }}>隣の同名と合体</button>
+              )}
+              {selRoom.group && <button className="btn-ghost py-1" onClick={() => updateRoom(selRoom.id, { group: undefined })}>合体を解く</button>}
               {selRoom.type === "stairs" && (
                 <>
                   <select className="field w-auto py-1" value={selRoom.stairKind ?? "straight"} onChange={(e) => { const k = e.target.value as StairKind; const size = k === "straight" ? { w: 0.91, d: 2.73 } : { w: 1.82, d: 1.82 }; const pos = clampPos(selRoom.x, selRoom.y, size.w, size.d); updateRoom(selRoom.id, { stairKind: k, ...size, ...pos, turn: selRoom.turn ?? "left" }); }}>
@@ -809,6 +816,7 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
   const topFloor = b.floors;
   const toPx = (x: number, y: number) => (flip ? { x: ox + (b.w - x) * px, y: oy + y * px } : { x: ox + x * px, y: oy + (b.d - y) * px });
   const wallW = compact ? 4 : 6;
+  const groups = roomGroups(floor.rooms);
   return (
     <g>
       <rect x={ox} y={oy} width={b.w * px} height={b.d * px} fill="#fbf7ef" stroke="none" data-bg="1" />
@@ -827,19 +835,26 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
         const h = r.d * px;
         const isSel = sel === r.id;
         const bad = overlapIds?.has(r.id);
-        const tatami = (r.w * r.d) / TATAMI_M2;
-        const showTatami = ["ldk", "living", "bedroom", "japanese", "study", "kitchen"].includes(r.type);
+        // 同じ名前でつながった部屋（L 字など）は 1 つの部屋として描く: 内側の壁を消し、名前と帖数は一番大きい矩形に 1 回だけ
+        const group = groups.find((g) => g.includes(r)) ?? [r];
+        const grouped = group.length > 1;
+        const main = group.reduce((m, q) => (q.w * q.d > m.w * m.d ? q : m), group[0]);
+        const labelHere = !grouped || main.id === r.id;
+        const tatami = group.reduce((sum, q) => sum + q.w * q.d, 0) / TATAMI_M2;
+        const showTatami = labelHere && ["ldk", "living", "bedroom", "japanese", "study", "kitchen"].includes(r.type);
         const nameSize = Math.min(compact ? 11 : 14, Math.max(7, Math.min(w / (r.name.length * 0.9 + 1), h / 2.2)));
         return (
           <g key={r.id}>
             <g onPointerDown={(e) => { e.stopPropagation(); onSelect?.(r.id); onStartDrag?.(r, e); }} className={onStartDrag ? "cursor-move" : ""}>
-              <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
+              <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={grouped ? "none" : isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
+              {grouped && groupOutline(group).filter((sg) => sg.x1 >= r.x - 1e-6 && sg.x2 <= r.x + r.w + 1e-6 && sg.y1 >= r.y - 1e-6 && sg.y2 <= r.y + r.d + 1e-6).map((sg, i) => { const a = toPx(sg.x1, sg.y1), c = toPx(sg.x2, sg.y2); return <line key={i} x1={a.x} y1={a.y} x2={c.x} y2={c.y} stroke="#1b1b1b" strokeWidth={2.5} strokeLinecap="square" />; })}
+              {grouped && isSel && <rect x={p.x + 1.5} y={p.y + 1.5} width={Math.max(0, w - 3)} height={Math.max(0, h - 3)} fill="none" stroke="#2f6fed" strokeWidth={2} strokeDasharray="6 3" style={{ pointerEvents: "none" }} />}
               {bad && <rect x={p.x + 2} y={p.y + 2} width={Math.max(0, w - 4)} height={Math.max(0, h - 4)} fill="#e11d48" fillOpacity={0.12} stroke="#e11d48" strokeWidth={1.5} strokeDasharray="5 3" style={{ pointerEvents: "none" }} />}
               {r.type === "bath" && <BathSymbol x={p.x} y={p.y} w={w} h={h} px={px} />}
               {r.type === "washroom" && <VanitySymbol x={p.x} y={p.y} w={w} h={h} px={px} vanity={r.vanity ?? (Math.max(r.w, r.d) >= 1.8 ? 1650 : 750)} />}
               {r.type === "garage" && <CarSymbol x={p.x} y={p.y} w={w} h={h} px={px} />}
               {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} dir={r.dir ?? "up"} flip={!!flip} showUp={lv < topFloor} showDown={lv > 1} compact={compact} kind={r.stairKind ?? "straight"} turn={r.turn ?? "left"} />}
-              {r.type === "stairs" ? (
+              {!labelHere ? null : r.type === "stairs" ? (
                 <text x={p.x + 4} y={p.y + (compact ? 9 : 12)} fontSize={compact ? 8 : 10} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={2} paintOrder="stroke">
                   {r.name}
                 </text>

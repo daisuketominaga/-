@@ -240,6 +240,8 @@ export type Room = {
   vanity?: number;
   /** 浴室: ユニットバスの呼称（1216/1616/1620/1818）。図に浴槽を描く */
   bathSize?: string;
+  /** 同じ値を持つ部屋は 1 つの部屋として描く（L 字の LDK など。内側の壁を消し、帖数は合計） */
+  group?: string;
   /** 建物外形の左下角を原点とした位置（m） */
   x: number;
   y: number;
@@ -390,8 +392,9 @@ export const ROOM_FILL: Record<RoomType, string> = {
   other: "#f0f0f0",
 };
 
-/** 畳数に換算するときの1帖の面積（m2）。不動産公正取引協議会の表示規約では1帖=1.62m2以上 */
-export const TATAMI_M2 = 1.62;
+/** 畳数に換算するときの1帖の面積（m2）。910mm モジュールの 1 帖 = 0.91×1.82 = 1.6562m2（3×4 マスの洋室 = 6.0 帖）。
+ *  不動産公正取引協議会の表示規約（1帖=1.62m2以上）も満たす */
+export const TATAMI_M2 = 0.91 * 1.82;
 
 /** ドラッグで置くときの標準サイズ（m、455mm単位） */
 export const ROOM_DEFAULT_SIZE: Record<RoomType, [number, number]> = {

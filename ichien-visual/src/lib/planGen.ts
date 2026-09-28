@@ -33,7 +33,7 @@ const SYSTEM = `あなたは日本の木造住宅の間取りを設計する建�
 export type PlanRequest = { mode: "edit" | "generate"; instruction: string; project: unknown; level: number; fixed?: string[]; options?: { parking?: string; roadFace?: string; roadClearance?: number | null } };
 
 const U = 0.91;
-type PRoom = { id: string; name: string; type: string; x: number; y: number; w: number; d: number; dir?: string; stairKind?: string; turn?: string; vanity?: number; bathSize?: string };
+type PRoom = { id: string; name: string; type: string; x: number; y: number; w: number; d: number; dir?: string; stairKind?: string; turn?: string; vanity?: number; bathSize?: string; group?: string };
 type PFloor = { level: number; rooms: PRoom[] };
 type PBuilding = { w: number; d: number; notches?: { corner: string; w: number; d: number }[] };
 
@@ -139,6 +139,25 @@ export function fillGaps(b: PBuilding, rooms: PRoom[]): PRoom[] {
     }
   }
   return [...rooms, ...added];
+}
+
+/** AI が 1 つの部屋を複数の矩形に分けて返したとき（L 字の LDK など）、接している同名の矩形に同じ group を付けて 1 部屋として描かせる */
+export function groupSplitRooms(rooms: PRoom[]): PRoom[] {
+  const out: (PRoom & { group?: string })[] = rooms.map((r) => ({ ...r }));
+  const touch = (a: PRoom, c: PRoom) => {
+    if (Math.abs(a.x + a.w - c.x) < 1e-6 || Math.abs(c.x + c.w - a.x) < 1e-6) return Math.min(a.y + a.d, c.y + c.d) - Math.max(a.y, c.y) > 1e-6;
+    if (Math.abs(a.y + a.d - c.y) < 1e-6 || Math.abs(c.y + c.d - a.y) < 1e-6) return Math.min(a.x + a.w, c.x + c.w) - Math.max(a.x, c.x) > 1e-6;
+    return false;
+  };
+  for (let i = 0; i < out.length; i++)
+    for (let j = i + 1; j < out.length; j++) {
+      const a = out[i], c = out[j];
+      if (a.type === "stairs" || a.type === "storage" || a.type === "closet" || a.name !== c.name || a.type !== c.type || !touch(a, c)) continue;
+      const gid = a.group ?? c.group ?? Math.random().toString(36).slice(2, 8);
+      const old = [a.group, c.group].filter(Boolean);
+      for (const r of out) if (r === a || r === c || (r.group && old.includes(r.group))) r.group = gid;
+    }
+  return out;
 }
 
 /** 生成した間取りを機械的に検査する（メートル単位）。空なら合格 */
@@ -285,6 +304,11 @@ export async function generatePlan(body: PlanRequest) {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: user }];
   let r = await call(messages);
   let floors = toMeters(r.json);
+  // 「日本語で指示して編集」では、返ってこなかった階（変えない階）は元のまま残す
+  if (mode === "edit") {
+    const orig = proj.floors ?? [];
+    floors = orig.map((f) => floors.find((g) => g.level === f.level && g.rooms.length > 0) ?? f).concat(floors.filter((g) => !orig.some((f) => f.level === g.level)));
+  }
   let issues = validatePlan(b, floors, roadFace, parking);
   let usage = r.usage;
   let repaired = false;
@@ -317,7 +341,7 @@ export async function generatePlan(body: PlanRequest) {
     }
   }
   // 仕上げ: 同じ部屋の細切れをまとめ、残った隙間は収納で埋める（決定的な処理）
-  floors = floors.map((f) => ({ ...f, rooms: fillGaps(b, mergeRooms(f.rooms)) }));
+  floors = floors.map((f) => ({ ...f, rooms: groupSplitRooms(fillGaps(b, mergeRooms(f.rooms))) }));
   issues = validatePlan(b, floors, roadFace, parking);
   return { floors, notes: r.json.notes, issues, repaired, usage };
 }
