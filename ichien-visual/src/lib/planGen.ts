@@ -210,9 +210,17 @@ export async function generatePlan(body: PlanRequest) {
     roadFace,
     parking,
   };
+  const notchText = (b.notches ?? [])
+    .map((n) => {
+      const x0 = n.corner.endsWith("W") ? 0 : b.w - n.w;
+      const y0 = n.corner.startsWith("S") ? 0 : b.d - n.d;
+      return `x ${toCells(x0)}〜${toCells(x0 + n.w)}, y ${toCells(y0)}〜${toCells(y0 + n.d)}（${n.corner} の角）`;
+    })
+    .join("、");
+  const notchLine = notchText ? `【建物の外＝部屋を置けない範囲（マス）】${notchText}。この範囲に少しでもかかる部屋は不可。` : "";
   const user =
     mode === "generate"
-      ? `次の建物外形に対して、全階の間取りを提案してください。今見ている階は ${level} 階です。道路側の面: ${roadFace}。駐車: ${parkingText}${fixed && fixed.length ? `固定する部屋の id（動かさない）: ${fixed.join(", ")}。` : "固定する部屋はありません。"}要望: ${instruction || defaultReq}。座標はすべてマス（1マス=910mm）で、910mm モジュールを厳守してください。\n\n入力（マス単位）:\n${JSON.stringify(cellsInput)}`
+      ? `次の建物外形（幅 ${toCells(b.w)} × 奥行 ${toCells(b.d)} マス）に対して、全階の間取りを提案してください。今見ている階は ${level} 階です。道路側の面: ${roadFace}。駐車: ${parkingText}${fixed && fixed.length ? `固定する部屋の id（動かさない）: ${fixed.join(", ")}。` : "固定する部屋はありません。"}${notchLine}要望: ${instruction || defaultReq}。座標はすべてマス（1マス=910mm）で、910mm モジュールを厳守してください。\n\n入力（マス単位）:\n${JSON.stringify(cellsInput)}`
       : `次の間取りを、指示に従って直してください。今見ている階は ${level} 階です。座標はすべてマス（1マス=910mm）です。\n指示: ${instruction}\n\n入力（マス単位）:\n${JSON.stringify(cellsInput)}`;
 
   const client = new Anthropic({ apiKey });
@@ -286,11 +294,14 @@ export async function generatePlan(body: PlanRequest) {
     const fixMsg: Anthropic.MessageParam[] = [
       ...history,
       { role: "assistant", content: r.text },
-      { role: "user", content: `上の間取りを機械的に検査したところ、次の問題がありました。すべて直した完全な JSON（全階・全部屋）をもう一度返してください。座標はマス単位のままです。\n- ${issues.join("\n- ")}` },
+      { role: "user", content: `上の間取りを機械的に検査したところ、次の問題がありました。すべて直した完全な JSON をもう一度返してください（直した階は全部屋を含めること。変えない階は省いてよい）。座標はマス単位のままです。\n- ${issues.join("\n- ")}` },
     ];
     try {
       const r2 = await call(fixMsg, "off");
-      const floors2 = toMeters(r2.json);
+      // 直した階だけ返ってくることがあるので、返ってこなかった階は前の結果を使う
+      const got = toMeters(r2.json);
+      const floors2 = floors.map((f) => got.find((g) => g.level === f.level && g.rooms.length > 0) ?? f);
+      for (const g of got) if (!floors2.some((f) => f.level === g.level)) floors2.push(g);
       const issues2 = validatePlan(b, floors2, roadFace, parking);
       usage = { ...usage, input_tokens: usage.input_tokens + r2.usage.input_tokens, output_tokens: usage.output_tokens + r2.usage.output_tokens } as typeof usage;
       if (issues2.length <= issues.length) {
