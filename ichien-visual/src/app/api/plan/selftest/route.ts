@@ -54,11 +54,12 @@ export async function GET(req: Request) {
   if (parking.startsWith("builtin")) { if (!gar) issues.push("ビルトインガレージが無い"); else if (!touches(gar)) issues.push("ガレージが道路側に接していない"); else if (Math.max(gar.w, gar.d) < 5.4) issues.push(`ガレージの奥行が足りない ${gar.w}×${gar.d}`); }
   const bath = floors.flatMap((f) => f.rooms).find((r) => r.type === "bath");
   const wash = floors.flatMap((f) => f.rooms).find((r) => r.type === "washroom");
+  // 生成に 1 分以上かかるので、結果を CDN に 30 分キャッシュして 2 回目の呼び出しで受け取れるようにする（?run=任意 で作り直し）
   return NextResponse.json({
     case: caseId, parking, roadFace, ms: Date.now() - t0, building: { w: b.w, d: b.d, notches: b.notches },
     ok: issues.length === 0, issues, notes: json.notes,
     bath: bath ? { w: bath.w, d: bath.d, bathSize: bath.bathSize } : null, washroom: wash ? { w: wash.w, d: wash.d, vanity: wash.vanity } : null,
     floors: floors.map((f) => ({ level: f.level, rooms: f.rooms.map((r) => `${r.name}(${r.type}) ${r.x},${r.y} ${r.w}×${r.d}`) })),
     usage: json.usage,
-  });
+  }, { headers: { "Cache-Control": "public, s-maxage=1800, max-age=0" } });
 }
