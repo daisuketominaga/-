@@ -410,7 +410,9 @@ export default function FloorPlan({ project, setProject }: Props) {
                   setProject((p) => {
                     const fh = [...p.building.floorHeights];
                     while (fh.length < n) fh.push(fh[fh.length - 1] ?? 2.4);
-                    return { ...p, building: { ...p.building, floors: n, floorHeights: fh }, floors: p.floors.filter((f) => f.level <= n) };
+                    // 「木造3階建て」のような表記も階数に合わせる
+                    const label = /(\d階建て|平屋)/.test(p.building.structureLabel) ? p.building.structureLabel.replace(/(\d階建て|平屋)/, n === 1 ? "平屋" : `${n}階建て`) : p.building.structureLabel;
+                    return { ...p, building: { ...p.building, floors: n, floorHeights: fh, structureLabel: label }, floors: p.floors.filter((f) => f.level <= n) };
                   });
                   if (level > n) setLevel(n);
                   setSel(null);

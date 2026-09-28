@@ -51,7 +51,7 @@ export default function Elevation({ project, setProject }: Props) {
         <div className="card space-y-2">
           <h3 className="text-sm font-semibold">建物の高さと屋根</h3>
           <div className="grid grid-cols-2 gap-2">
-            <Num label="階数" v={b.floors} step={1} onChange={(v) => { const n = Math.max(1, Math.min(4, Math.round(v))); const fh = [...b.floorHeights]; while (fh.length < n) fh.push(2.3); setB({ floors: n, floorHeights: fh }); }} />
+            <Num label="階数" v={b.floors} step={1} onChange={(v) => { const n = Math.max(1, Math.min(4, Math.round(v))); const fh = [...b.floorHeights]; while (fh.length < n) fh.push(2.3); setB({ floors: n, floorHeights: fh, structureLabel: /(\d階建て|平屋)/.test(b.structureLabel) ? b.structureLabel.replace(/(\d階建て|平屋)/, n === 1 ? "平屋" : `${n}階建て`) : b.structureLabel }); }} />
             <Num label="基礎高 m" v={b.foundation} step={0.05} onChange={(v) => setB({ foundation: v })} />
             {Array.from({ length: b.floors }, (_, i) => (
               <Num key={i} label={`${i + 1}階 天井高 m`} v={b.floorHeights[i] ?? 2.3} step={0.05} onChange={(v) => { const fh = [...b.floorHeights]; fh[i] = v; setB({ floorHeights: fh }); }} />
