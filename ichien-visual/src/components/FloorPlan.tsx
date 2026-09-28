@@ -838,8 +838,14 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
         // 同じ名前でつながった部屋（L 字など）は 1 つの部屋として描く: 内側の壁を消し、名前と帖数は一番大きい矩形に 1 回だけ
         const group = groups.find((g) => g.includes(r)) ?? [r];
         const grouped = group.length > 1;
-        const main = group.reduce((m, q) => (q.w * q.d > m.w * m.d ? q : m), group[0]);
+        // ラベルは合体後の形の重心に置く（重心が形の外に出る L 字などは、重心にいちばん近い矩形の中心）
+        const gArea = group.reduce((sum, q) => sum + q.w * q.d, 0);
+        const cx = group.reduce((sum, q) => sum + (q.x + q.w / 2) * q.w * q.d, 0) / gArea;
+        const cy = group.reduce((sum, q) => sum + (q.y + q.d / 2) * q.w * q.d, 0) / gArea;
+        const holder = group.find((q) => cx >= q.x + 0.2 && cx <= q.x + q.w - 0.2 && cy >= q.y + 0.2 && cy <= q.y + q.d - 0.2);
+        const main = holder ?? group.reduce((m, q) => (Math.hypot(q.x + q.w / 2 - cx, q.y + q.d / 2 - cy) < Math.hypot(m.x + m.w / 2 - cx, m.y + m.d / 2 - cy) ? q : m), group[0]);
         const labelHere = !grouped || main.id === r.id;
+        const lc = grouped ? toPx(holder ? cx : main.x + main.w / 2, holder ? cy : main.y + main.d / 2) : { x: p.x + w / 2, y: p.y + h / 2 };
         const tatami = group.reduce((sum, q) => sum + q.w * q.d, 0) / TATAMI_M2;
         const showTatami = labelHere && ["ldk", "living", "bedroom", "japanese", "study", "kitchen"].includes(r.type);
         const nameSize = Math.min(compact ? 11 : 14, Math.max(7, Math.min(w / (r.name.length * 0.9 + 1), h / 2.2)));
@@ -859,12 +865,12 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
                   {r.name}
                 </text>
               ) : (
-                <text x={p.x + w / 2} y={p.y + h / 2 + (showTatami && h > 40 ? -2 : nameSize / 3)} textAnchor="middle" fontSize={nameSize} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
+                <text x={lc.x} y={lc.y + (showTatami && h > 40 ? -2 : nameSize / 3)} textAnchor="middle" fontSize={nameSize} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
                   {r.name}
                 </text>
               )}
               {showTatami && h > 40 && (
-                <text x={p.x + w / 2} y={p.y + h / 2 + (compact ? 11 : 14)} textAnchor="middle" fontSize={compact ? 9 : 11} fill="#333" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
+                <text x={lc.x} y={lc.y + (compact ? 11 : 14)} textAnchor="middle" fontSize={compact ? 9 : 11} fill="#333" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={3} paintOrder="stroke">
                   {round(tatami, 1).toFixed(1)}帖
                 </text>
               )}
