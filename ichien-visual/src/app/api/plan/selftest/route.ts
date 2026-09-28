@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { lessonProject3, lessonProject2 } from "@/lib/sample";
 import { roadFaceOf, insideFootprint } from "@/lib/geometry";
 import type { Project, Room } from "@/lib/types";
+import { generatePlan } from "@/lib/planGen";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -19,17 +20,15 @@ export async function GET(req: Request) {
   // 部屋を空にして全提案させる
   const p = { ...project, floors: project.floors.map((f) => ({ ...f, rooms: [], fixtures: [] })) };
   const roadFace = roadFaceOf(p.site, p.building) ?? "S";
-  const origin = url.origin;
   const t0 = Date.now();
-  const res = await fetch(`${origin}/api/plan`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: "generate", instruction: "", project: { building: p.building, floors: p.floors, site: { areaOverride: p.site.areaOverride, coverageRatio: p.site.coverageRatio, farRatio: p.site.farRatio } }, level: 1, fixed: [], options: { parking, roadFace, roadClearance: 1.0 } }),
-  });
-  const json = await res.json();
-  if (!res.ok) return NextResponse.json({ error: json.error }, { status: 500 });
+  let json: Awaited<ReturnType<typeof generatePlan>>;
+  try {
+    json = await generatePlan({ mode: "generate", instruction: "", project: { building: p.building, floors: p.floors, site: { areaOverride: p.site.areaOverride, coverageRatio: p.site.coverageRatio, farRatio: p.site.farRatio } }, level: 1, fixed: [], options: { parking, roadFace, roadClearance: 1.0 } });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
   const b = p.building;
-  const floors = json.floors as { level: number; rooms: Room[] }[];
+  const floors = json.floors as unknown as { level: number; rooms: Room[] }[];
   const isMod = (v: number) => Math.abs(v / 0.91 - Math.round(v / 0.91)) < 1e-6;
   const halfOk = (r: Room) => ["hall", "toilet", "washroom", "closet", "storage", "stairs", "entrance"].includes(r.type);
   const issues: string[] = [];
