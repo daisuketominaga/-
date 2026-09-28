@@ -28,7 +28,9 @@ export async function GET(req: Request) {
     console.error("plan selftest failed", (e as Error).message, Date.now() - t0, "ms");
     return NextResponse.json({ error: (e as Error).message, ms: Date.now() - t0 }, { status: 500 });
   }
-  console.log("plan selftest generated in", Date.now() - t0, "ms", "issues:", json.issues.length);
+  console.log("plan selftest generated in", Date.now() - t0, "ms", "issues:", json.issues.length, "repaired:", json.repaired);
+  // 外から取りにくいときのために、結果をログにも出す
+  console.log("plan selftest result", JSON.stringify({ issues: json.issues, notes: json.notes, floors: json.floors.map((f) => ({ level: f.level, rooms: f.rooms.map((r) => `${r.name}(${r.type}) ${r.x},${r.y} ${r.w}×${r.d}${r.dir ? " " + r.dir : ""}${r.vanity ? " v" + r.vanity : ""}${r.bathSize ? " b" + r.bathSize : ""}`) })) }));
   const b = p.building;
   const floors = json.floors;
   const issues = json.issues;

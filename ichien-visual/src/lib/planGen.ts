@@ -130,8 +130,9 @@ export async function generatePlan(body: PlanRequest) {
         ...(thinking === "off" ? { thinking: { type: "disabled" as const } } : { thinking: { type: "adaptive" as const }, output_config: { effort: "low" as const } }),
       })
       .finalMessage();
-  const call = async (messages: Anthropic.MessageParam[]) => {
-    let msg = await ask(messages, "low");
+  const call = async (messages: Anthropic.MessageParam[], thinking: "low" | "off" = "low") => {
+    const t0 = Date.now();
+    let msg = await ask(messages, thinking);
     let text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
     if (!text.trim() && msg.stop_reason === "max_tokens") {
       msg = await ask(messages, "off");
@@ -144,6 +145,7 @@ export async function generatePlan(body: PlanRequest) {
       throw new Error(`間取りのJSONが読めませんでした（stop=${msg.stop_reason}, 文字数=${text.length}）: ${text.slice(0, 200)}`);
     }
     if (!Array.isArray(json.floors)) throw new Error("間取りの形式が読めませんでした");
+    console.log("plan call", thinking, Date.now() - t0, "ms", "out", msg.usage.output_tokens, "stop", msg.stop_reason);
     return { json, text, usage: msg.usage };
   };
 
@@ -188,7 +190,7 @@ export async function generatePlan(body: PlanRequest) {
       { role: "user", content: `上の間取りを機械的に検査したところ、次の問題がありました。すべて直した完全な JSON（全階）をもう一度返してください。座標はマス単位のままです。\n- ${issues.join("\n- ")}` },
     ];
     try {
-      const r2 = await call(fixMsg);
+      const r2 = await call(fixMsg, "off"); // 直しは考えずに速く
       const floors2 = toMeters(r2.json);
       const issues2 = validatePlan(b, floors2, roadFace, parking);
       if (issues2.length <= issues.length) {
