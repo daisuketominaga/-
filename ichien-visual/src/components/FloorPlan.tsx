@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
 import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
-import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect } from "@/lib/geometry";
+import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
-import { siteInBuildingFrame, type SiteContext } from "@/lib/grid";
+import { siteInBuildingFrame, clearances, type SiteContext } from "@/lib/grid";
 import FixtureSchedule from "./FixtureSchedule";
 
 type Props = {
@@ -122,6 +122,8 @@ export default function FloorPlan({ project, setProject }: Props) {
   const [sel, setSel] = useState<Sel>(null);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
+  const [parking, setParking] = useState<"none" | "outdoor" | "builtin1" | "builtin2">("outdoor");
+  const [keepFixed, setKeepFixed] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
   const [showFxLabels, setShowFxLabels] = useState(true);
@@ -252,7 +254,7 @@ export default function FloorPlan({ project, setProject }: Props) {
     const w = Math.min(dw, snap(building.w));
     const d = Math.min(dd, snap(building.d));
     const pos = at ? clampPos(at.x, at.y, w, d) : { x: 0, y: 0 };
-    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: pos.x, y: pos.y, w, d, ...(type === "stairs" ? { dir: "up" as StairDir, stairKind: "straight" as StairKind } : {}) };
+    const r: Room = { id: uid(), name: ROOM_LABEL[type], type, x: pos.x, y: pos.y, w, d, ...(type === "stairs" ? { dir: "up" as StairDir, stairKind: "straight" as StairKind } : {}), ...(type === "bath" ? { bathSize: "1616" } : {}), ...(type === "washroom" ? { vanity: 1650 } : {}) };
     setFloor((f) => ({ ...f, rooms: [...f.rooms, r] }));
     setSel({ kind: "room", id: r.id });
   };
@@ -307,11 +309,15 @@ export default function FloorPlan({ project, setProject }: Props) {
     setMsg(null);
     try {
       // 「提案」では、依頼者が置いた玄関と階段は動かさない
-      const fixed = mode === "generate" ? project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "entrance" || r.type === "stairs").map((r) => r.id) : undefined;
+      const fixed = mode === "generate" && keepFixed ? project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "entrance" || r.type === "stairs").map((r) => r.id) : undefined;
+      // 道路側の面（建物座標）と、道路境界までの空き（屋外駐車の可否の目安）
+      const roadFace = roadFaceOf(project.site, project.building) ?? "S";
+      const cl = clearances(project.site, project.grid, project.building.w, project.building.d);
+      const roadClearance = roadFace === "S" ? cl.bottom : roadFace === "N" ? cl.top : roadFace === "W" ? cl.left : cl.right;
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, instruction, project: { building: project.building, floors: project.floors, site: { areaOverride: siteArea, coverageRatio: project.site.coverageRatio, farRatio: project.site.farRatio } }, level, fixed }),
+        body: JSON.stringify({ mode, instruction, project: { building: { ...project.building, notches: project.building.notches ?? [] }, floors: project.floors, site: { areaOverride: siteArea, coverageRatio: project.site.coverageRatio, farRatio: project.site.farRatio } }, level, fixed, options: { parking, roadFace, roadClearance } }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "失敗しました");
@@ -467,11 +473,27 @@ export default function FloorPlan({ project, setProject }: Props) {
             <button className="btn-primary flex-1 justify-center" disabled={busy || !instruction.trim()} onClick={() => runAi("edit")}>
               {busy ? "考え中…" : "この指示で直す"}
             </button>
-            <button className="btn-ghost" disabled={busy} onClick={() => { const hasEnt = project.floors.some((f) => f.rooms.some((r) => r.type === "entrance")); if (confirm(hasEnt ? "玄関と階段はそのまま残し、他の部屋を作り直して提案させますか？（今の他の部屋は消えます）" : "玄関がまだ置かれていません。玄関の位置も含めて全部提案させますか？（先に玄関を置くと、その位置を守って提案します）")) runAi("generate"); }}>
-              残りを提案
+          </div>
+          <div className="space-y-1 rounded bg-slate-50 p-2 text-xs">
+            <div className="font-medium">参考プランを作る（道路の向き・車庫込み・910mmモジュール）</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-500">駐車</span>
+              <select className="field w-auto py-0.5" value={parking} onChange={(e) => setParking(e.target.value as typeof parking)}>
+                <option value="outdoor">屋外に1台（建物の外）</option>
+                <option value="builtin1">ビルトイン1台</option>
+                <option value="builtin2">ビルトイン2台</option>
+                <option value="none">なし</option>
+              </select>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={keepFixed} onChange={(e) => setKeepFixed(e.target.checked)} />置いた玄関・階段は動かさない</label>
+            </div>
+            {(() => { const rf = roadFaceOf(project.site, project.building); const cl = clearances(project.site, project.grid, project.building.w, project.building.d); const gap = rf === "S" ? cl.bottom : rf === "N" ? cl.top : rf === "W" ? cl.left : rf === "E" ? cl.right : null; return (
+              <div className="text-[11px] text-slate-500">道路側の面: {rf ? ({ S: "底辺側", N: "奥側", W: "左側", E: "右側" } as const)[rf] : "道路未設定"}。道路境界までの空き {gap === null ? "―" : `${Math.round(gap * 1000).toLocaleString()}mm`}{gap !== null && parking === "outdoor" ? (gap >= 5.0 ? "（屋外駐車 1台分の奥行 5.0m は確保できています）" : "（屋外駐車には奥行 5.0m 程度が必要です。建物を奥へ動かすか、ビルトインを検討）") : ""}</div>
+            ); })()}
+            <button className="btn-primary w-full justify-center" disabled={busy} onClick={() => { if (confirm(keepFixed && project.floors.some((f) => f.rooms.some((r) => r.type === "entrance" || r.type === "stairs")) ? "玄関と階段はそのまま残し、他の部屋を作り直して提案させますか？（今の他の部屋は消えます）" : "全階の間取りをAIに提案させます。今の部屋は消えます。よろしいですか？")) runAi("generate"); }}>
+              {busy ? "考え中…" : "参考プランを作る"}
             </button>
           </div>
-          <p className="text-[11px] text-slate-500">「残りを提案」は、あなたが置いた玄関（と階段）の位置・向きを固定して、他の部屋をAIが埋めます。</p>
+          <p className="text-[11px] text-slate-500">上の欄に「1階に和室」「ガレージの横に土間収納」など要望を書いてから押すと、それも反映します。結果は 910mm の線に合わせて作らせていますが、はみ出しや重なり（赤）が出たら手で直してください。</p>
           {msg && <div className={`text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
         </div>
 
@@ -535,6 +557,21 @@ export default function FloorPlan({ project, setProject }: Props) {
                   </select>
                   <button className="btn-ghost py-1" onClick={() => copyStairsToAllFloors(selRoom)}>全階に同じ階段</button>
                 </>
+              )}
+              {selRoom.type === "bath" && (
+                <select className="field w-auto py-1" value={selRoom.bathSize ?? ""} onChange={(e) => { const k = e.target.value; const size = { "1216": { w: 1.365, d: 1.82 }, "1616": { w: 1.82, d: 1.82 }, "1620": { w: 1.82, d: 2.275 }, "1818": { w: 2.275, d: 2.275 } }[k]; if (!size) { updateRoom(selRoom.id, { bathSize: undefined }); return; } const sw = selRoom.w >= selRoom.d ? { w: Math.max(size.w, size.d), d: Math.min(size.w, size.d) } : size; const pos = clampPos(selRoom.x, selRoom.y, sw.w, sw.d); updateRoom(selRoom.id, { bathSize: k, ...sw, ...pos }); }} title="ユニットバスの呼称">
+                  <option value="">浴室サイズ: 自由</option>
+                  <option value="1216">1216（1.365×1.82）</option>
+                  <option value="1616">1616（1.82×1.82）</option>
+                  <option value="1620">1620（1.82×2.275）</option>
+                  <option value="1818">1818（2.275×2.275）</option>
+                </select>
+              )}
+              {selRoom.type === "washroom" && (
+                <select className="field w-auto py-1" value={selRoom.vanity ?? ""} onChange={(e) => updateRoom(selRoom.id, { vanity: e.target.value ? Number(e.target.value) : undefined })} title="洗面台の幅">
+                  <option value="">洗面台: なし</option>
+                  {[600, 750, 900, 1200, 1650].map((v) => <option key={v} value={v}>洗面台 {v}mm{Math.min(selRoom.w, selRoom.d) * 1000 < v + 100 && Math.max(selRoom.w, selRoom.d) * 1000 < v + 100 ? "（部屋が小さい）" : ""}</option>)}
+                </select>
               )}
               {overlapIds.has(selRoom.id) && <span className="font-medium text-red-600">⚠ 他の部屋と重なっています</span>}
               <button className="btn-ghost py-1 text-red-600" onClick={() => removeRoom(selRoom.id)}>削除</button>
@@ -797,6 +834,9 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
             <g onPointerDown={(e) => { e.stopPropagation(); onSelect?.(r.id); onStartDrag?.(r, e); }} className={onStartDrag ? "cursor-move" : ""}>
               <rect x={p.x} y={p.y} width={w} height={h} fill={ROOM_FILL[r.type]} stroke={isSel ? "#2f6fed" : "#1b1b1b"} strokeWidth={isSel ? 3 : 2.5} />
               {bad && <rect x={p.x + 2} y={p.y + 2} width={Math.max(0, w - 4)} height={Math.max(0, h - 4)} fill="#e11d48" fillOpacity={0.12} stroke="#e11d48" strokeWidth={1.5} strokeDasharray="5 3" style={{ pointerEvents: "none" }} />}
+              {r.type === "bath" && <BathSymbol x={p.x} y={p.y} w={w} h={h} px={px} />}
+              {r.type === "washroom" && <VanitySymbol x={p.x} y={p.y} w={w} h={h} px={px} vanity={r.vanity ?? (Math.max(r.w, r.d) >= 1.8 ? 1650 : 750)} />}
+              {r.type === "garage" && <CarSymbol x={p.x} y={p.y} w={w} h={h} px={px} />}
               {r.type === "stairs" && <StairLines x={p.x} y={p.y} w={w} h={h} px={px} dir={r.dir ?? "up"} flip={!!flip} showUp={lv < topFloor} showDown={lv > 1} compact={compact} kind={r.stairKind ?? "straight"} turn={r.turn ?? "left"} />}
               {r.type === "stairs" ? (
                 <text x={p.x + 4} y={p.y + (compact ? 9 : 12)} fontSize={compact ? 8 : 10} fontWeight={700} fill="#222" style={{ pointerEvents: "none" }} stroke="#fff" strokeWidth={2} paintOrder="stroke">
@@ -818,6 +858,49 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
       })}
       {/* 外形線は部屋の上に描く（切り欠きが見えるように） */}
       <polygon points={footprintPolygon(b).map((q) => { const t = toPx(q.x, q.y); return `${t.x},${t.y}`; }).join(" ")} fill="none" stroke="#1b1b1b" strokeWidth={wallW} strokeLinejoin="miter" style={{ pointerEvents: "none" }} />
+    </g>
+  );
+}
+
+/** 浴室: 浴槽（長辺側の壁沿い、1600×750 程度）と洗い場の排水 */
+function BathSymbol({ x, y, w, h, px }: { x: number; y: number; w: number; h: number; px: number }) {
+  const horiz = w >= h;
+  const tw = horiz ? Math.min(w - 8, 1.6 * px) : Math.min(0.75 * px, w - 8);
+  const th = horiz ? Math.min(0.75 * px, h - 8) : Math.min(h - 8, 1.6 * px);
+  const tx = x + 4, ty = y + 4;
+  return (
+    <g style={{ pointerEvents: "none" }} stroke="#5b6b7a" strokeWidth={1} fill="none">
+      <rect x={tx} y={ty} width={tw} height={th} rx={6} />
+      <rect x={tx + 4} y={ty + 4} width={Math.max(0, tw - 8)} height={Math.max(0, th - 8)} rx={5} />
+      <circle cx={x + w - 12} cy={y + h - 12} r={3} />
+    </g>
+  );
+}
+/** 洗面・脱衣室: 洗面台（幅 vanity mm × 奥行 600）を短辺側の壁沿いに */
+function VanitySymbol({ x, y, w, h, px, vanity }: { x: number; y: number; w: number; h: number; px: number; vanity: number }) {
+  const vw = (vanity / 1000) * px, vd = 0.6 * px;
+  const horiz = w >= vw + 6;
+  const bw = horiz ? Math.min(vw, w - 6) : vd, bh = horiz ? vd : Math.min(vw, h - 6);
+  const bx = x + 3, by = y + 3;
+  const bowlR = Math.min(0.2 * px, bh / 2 - 2, bw / 2 - 2);
+  return (
+    <g style={{ pointerEvents: "none" }} stroke="#5b6b7a" strokeWidth={1} fill="none">
+      <rect x={bx} y={by} width={bw} height={bh} />
+      {bowlR > 2 && <ellipse cx={bx + bw / 2} cy={by + bh / 2} rx={bowlR * 1.3} ry={bowlR} />}
+      <text x={bx + bw / 2} y={by + bh + 9} textAnchor="middle" fontSize={7} fill="#5b6b7a" stroke="none">洗面台{vanity}</text>
+    </g>
+  );
+}
+/** ガレージ: 車（4.7×1.8m）の輪郭を中央に */
+function CarSymbol({ x, y, w, h, px }: { x: number; y: number; w: number; h: number; px: number }) {
+  const vert = h >= w;
+  const cw = (vert ? 1.8 : 4.7) * px, ch = (vert ? 4.7 : 1.8) * px;
+  if (cw > w - 4 || ch > h - 4) return null;
+  const cx = x + (w - cw) / 2, cy = y + (h - ch) / 2;
+  return (
+    <g style={{ pointerEvents: "none" }} stroke="#6b7280" strokeWidth={1} fill="none" strokeDasharray="4 2">
+      <rect x={cx} y={cy} width={cw} height={ch} rx={8} />
+      {vert ? <rect x={cx + cw * 0.12} y={cy + ch * 0.3} width={cw * 0.76} height={ch * 0.4} rx={5} /> : <rect x={cx + cw * 0.3} y={cy + ch * 0.12} width={cw * 0.4} height={ch * 0.76} rx={5} />}
     </g>
   );
 }

@@ -236,6 +236,10 @@ export type Room = {
   stairKind?: StairKind;
   /** 回り・かね折れ階段の曲がる向き */
   turn?: TurnSide;
+  /** 洗面・脱衣室: 洗面台の幅 mm（600/750/900/1200/1650）。図に洗面台の記号を描く */
+  vanity?: number;
+  /** 浴室: ユニットバスの呼称（1216/1616/1620/1818）。図に浴槽を描く */
+  bathSize?: string;
   /** 建物外形の左下角を原点とした位置（m） */
   x: number;
   y: number;
