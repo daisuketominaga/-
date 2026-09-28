@@ -1,0 +1,31 @@
+// 角ハンドルで切り欠きを作る確認: node scripts/shot10.mjs <base> <out>
+import { chromium } from "playwright";
+const [base = "http://localhost:3134", out = "/tmp/shots"] = process.argv.slice(2);
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+page.on("dialog", (d) => d.accept());
+await page.goto(base, { waitUntil: "networkidle" });
+await page.getByRole("button", { name: "サンプル" }).click(); await page.waitForTimeout(400);
+await page.getByRole("button", { name: "建築可能範囲", exact: true }).first().click(); await page.waitForTimeout(800);
+await page.getByRole("button", { name: /矩形で最大にする/ }).click().catch(() => {}); await page.waitForTimeout(500);
+const before = await page.locator("text=/切り欠き後|マス/").first().innerText();
+const h = page.locator("circle[data-corner='NW']");
+const box = await h.boundingBox();
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.down();
+await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 45, { steps: 6 });
+await page.mouse.up();
+await page.waitForTimeout(400);
+const after = await page.locator("text=/切り欠き後/").first().innerText().catch(() => "(no notch)");
+await page.screenshot({ path: `${out}/corner_notch.png` });
+// 角まで戻して消す
+const h2 = page.locator("circle[data-corner='NW']");
+const b2 = await h2.boundingBox();
+await page.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2);
+await page.mouse.down();
+await page.mouse.move(b2.x + b2.width / 2 - 80, b2.y + b2.height / 2 - 80, { steps: 6 });
+await page.mouse.up();
+await page.waitForTimeout(400);
+const removed = await page.locator("text=/切り欠き後/").count();
+console.log(JSON.stringify({ before, after, removedNotchTexts: removed }));
+await browser.close();

@@ -105,6 +105,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     | { kind: "move"; su: number; sv: number; ou: number; ov: number }
     | { kind: "edge"; edge: "left" | "right" | "top" | "bottom"; su: number; sv: number; ou: number; ov: number; ow: number; od: number }
     | { kind: "cells"; add: boolean; cells: Set<string>; ou: number; ov: number; last: string }
+    | { kind: "corner"; corner: Notch["corner"]; ou: number; ov: number; ow: number; od: number }
     | null
   >(null);
   const pointerToUV = (e: { clientX: number; clientY: number }) => {
@@ -136,6 +137,12 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
       return;
     }
+    const cornerAttr = target.getAttribute("data-corner") as Notch["corner"] | null;
+    if (cornerAttr) {
+      dragRef.current = { kind: "corner", corner: cornerAttr, ou: grid.u, ov: grid.v, ow: building.w, od: building.d };
+      (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+      return;
+    }
     if (handle) {
       dragRef.current = { kind: "edge", edge: handle, su: uv.u, sv: uv.v, ou: grid.u, ov: grid.v, ow: building.w, od: building.d };
       (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
@@ -158,6 +165,20 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       else if (d.edge === "top") apply({ d: d.od + dv });
       else if (d.edge === "left") { const nu = snapKeep(d.ou + du, d.ou); apply({ u: nu, w: d.ow + (d.ou - nu) }); }
       else { const nv = snapKeep(d.ov + dv, d.ov); apply({ v: nv, d: d.od + (d.ov - nv) }); }
+    } else if (d.kind === "corner") {
+      // 角のハンドル: 外側の角から内側へ引いた分だけ切り欠く。角まで戻すと切り欠きが消える
+      const ox = d.corner === "SW" || d.corner === "NW" ? 0 : d.ow;
+      const oy = d.corner === "SW" || d.corner === "SE" ? 0 : d.od;
+      const inX = d.corner === "SW" || d.corner === "NW" ? 1 : -1;
+      const inY = d.corner === "SW" || d.corner === "SE" ? 1 : -1;
+      const nw = snap(Math.max(0, inX * (uv.u - d.ou - ox)));
+      const nd = snap(Math.max(0, inY * (uv.v - d.ov - oy)));
+      setProject((p) => {
+        const others = (p.building.notches ?? []).filter((n) => n.corner !== d.corner);
+        const keep = nw >= unit - 1e-6 && nd >= unit - 1e-6;
+        const n: Notch = { corner: d.corner, w: Math.min(nw, p.building.w - unit), d: Math.min(nd, p.building.d - unit) };
+        return { ...p, building: { ...p.building, notches: keep ? [...others, n] : others } };
+      });
     } else {
       const key = cellKeyAt(uv, d.ou, d.ov);
       if (key === d.last) return;
@@ -334,6 +355,15 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             {!readOnly && mode === "move" && ([["left", bu, bv + bd / 2], ["right", bu + bw, bv + bd / 2], ["bottom", bu + bw / 2, bv], ["top", bu + bw / 2, bv + bd]] as const).map(([h, hu, hv]) => (
               <rect key={h} data-handle={h} x={X(hu) - 7} y={Y(hv) - 7} width={14} height={14} rx={3} fill="#fff" stroke="#2f6fed" strokeWidth={2} style={{ cursor: h === "left" || h === "right" ? "ew-resize" : "ns-resize" }} />
             ))}
+            {/* 角のハンドル: 内側へドラッグすると切り欠き、角まで戻すと消える */}
+            {!readOnly && mode === "move" && (["SW", "SE", "NE", "NW"] as const).map((c) => {
+              const n = notches.find((x) => x.corner === c);
+              const ox = c === "SW" || c === "NW" ? 0 : bw;
+              const oy = c === "SW" || c === "SE" ? 0 : bd;
+              const hx = ox + (n ? (c === "SW" || c === "NW" ? n.w : -n.w) : 0);
+              const hy = oy + (n ? (c === "SW" || c === "SE" ? n.d : -n.d) : 0);
+              return <circle key={c} data-corner={c} cx={X(bu + hx)} cy={Y(bv + hy)} r={7} fill={n ? "#2f6fed" : "#fff"} stroke="#2f6fed" strokeWidth={2} style={{ cursor: "crosshair" }}><title>{n ? "ドラッグで切り欠きの大きさを変える（角まで戻すと消える）" : "内側へドラッグすると角を切り欠く"}</title></circle>;
+            })}
             <text x={X(bu + bw / 2)} y={Y(bv + bd / 2)} textAnchor="middle" fontSize={14} fontWeight={700} fill={fits ? "#1d479c" : "#c0392b"} style={{ pointerEvents: "none" }}>
               {modules(building.w)}×{modules(building.d)}マス
             </text>
