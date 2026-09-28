@@ -45,8 +45,24 @@ export async function generatePlan(body: PlanRequest) {
       : `次の間取りを、指示に従って直してください。今見ている階は ${level} 階です。\n指示: ${instruction}\n\n入力:\n${JSON.stringify(project)}`;
 
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({ model: MODEL, max_tokens: 8000, system: SYSTEM, messages: [{ role: "user", content: user }] });
-  const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+  // 生成は 1 分以上かかることがあるのでストリーミングで受ける。思考（thinking）に出力枠を使い切って本文が空にならないよう、
+  // 思考は浅め（effort: low）にし、それでも本文が空なら思考なしでもう一度だけ試す。
+  const ask = (thinking: "low" | "off") =>
+    client.messages
+      .stream({
+        model: MODEL,
+        max_tokens: 16000,
+        system: SYSTEM,
+        messages: [{ role: "user", content: user }],
+        ...(thinking === "off" ? { thinking: { type: "disabled" as const } } : { thinking: { type: "adaptive" as const }, output_config: { effort: "low" as const } }),
+      })
+      .finalMessage();
+  let msg = await ask("low");
+  let text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+  if (!text.trim() && msg.stop_reason === "max_tokens") {
+    msg = await ask("off");
+    text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+  }
   let json: { floors?: unknown; notes?: string };
   try {
     json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
