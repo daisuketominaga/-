@@ -1,6 +1,7 @@
 import type { Pt, Site, GridSetting, Building } from "./types";
 import { HALF, MODULE } from "./types";
-import { pointInPolygon, insetPolygon, round, dist } from "./geometry";
+import { pointInPolygon, insetPolygon, round, dist, footprintPolygon } from "./geometry";
+import type { Notch } from "./types";
 
 /** 底辺の枠組み: 始点 a、辺に沿った単位ベクトル t、内側向きの単位法線 n */
 export type Frame = { a: Pt; t: Pt; n: Pt; len: number; reversed: boolean };
@@ -175,4 +176,89 @@ export function siteInBuildingFrame(site: Site, g: GridSetting, setback: number)
     setback: inner.map((p) => shift(toLocal(f, p))),
     roads: roadBands(site, f, 3).map((r) => ({ ...r, poly: r.poly.map(shift), mid: shift(r.mid) })),
   };
+}
+
+
+/** 外形（切り欠き後）の頂点と各辺の中点が、離れ線の内側にあるか */
+export function footprintFits(f: Frame, inner: Pt[], g: GridSetting, b: Building): boolean {
+  const poly = footprintPolygon(b);
+  // 頂点・辺の中点を、建物の中心へごくわずか（0.1mm）寄せてから判定（離れ線にぴったり揃えた辺を内側と扱う）
+  const cx = b.w / 2, cy = b.d / 2, E = 1e-4;
+  const nudge = (p: Pt): Pt => { const dx = cx - p.x, dy = cy - p.y, l = Math.hypot(dx, dy) || 1; return { x: p.x + (dx / l) * E, y: p.y + (dy / l) * E }; };
+  const pts: Pt[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    pts.push(nudge(a), nudge({ x: (a.x + c.x) / 2, y: (a.y + c.y) / 2 }));
+  }
+  return pts.every((p) => pointInPolygon(toWorld(f, { x: g.u + p.x, y: g.v + p.y }), inner));
+}
+
+export type StairResult = { u: number; v: number; w: number; d: number; notches: Notch[]; area: number; cells: number };
+
+/**
+ * 底辺（基準の辺）から setback だけ内側の線に建物の底辺を揃え、455mm のマス目で離れ線の内側に
+ * 完全に入るマスをすべて拾って、階段状の最大範囲を作る。
+ * 結果は「外接する枠 ＋ 角ごとの切り欠き（複数）」で表す。左右の輪郭が凸でない敷地では、
+ * 角の切り欠きで表せる形（各辺の輪郭が単調な階段）になるようマスを減らす（安全側）。
+ * u0: 底辺に沿ったマス目の原点（この値の倍数位置にマスの境界が来る）。v は setback に固定。
+ */
+export function maxStair(site: Site, edgeIndex: number, setback: number, u0 = 0): StairResult {
+  const f = baseFrame(site, edgeIndex);
+  const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
+  const loc = site.points.map((p) => toLocal(f, p));
+  const minU = Math.floor((Math.min(...loc.map((p) => p.x)) - u0) / HALF) * HALF + u0;
+  const maxU = Math.max(...loc.map((p) => p.x));
+  const maxV = Math.max(...loc.map((p) => p.y));
+  const v0 = setback;
+  // 離れ線にぴったり乗る点は「内側」とみなしたいので、判定点はマスの内側へごくわずかに寄せる
+  const E = 1e-4;
+  const cellIn = (u: number, v: number) => {
+    const u0 = u + E, u1 = u + HALF - E, w0 = v + E, w1 = v + HALF - E;
+    const pts: Pt[] = [
+      { x: u0, y: w0 }, { x: u1, y: w0 }, { x: u1, y: w1 }, { x: u0, y: w1 },
+      { x: (u0 + u1) / 2, y: w0 }, { x: (u0 + u1) / 2, y: w1 }, { x: u0, y: (w0 + w1) / 2 }, { x: u1, y: (w0 + w1) / 2 },
+    ];
+    return pts.every((p) => pointInPolygon(toWorld(f, p), inner));
+  };
+  const cols = Math.ceil((maxU - minU) / HALF) + 1;
+  const rows = Math.ceil((maxV - v0) / HALF) + 1;
+  // 行ごとの「入っているマス」の最長の連続区間 [L_j, R_j]（列番号）
+  const L: number[] = [], R: number[] = [];
+  for (let j = 0; j < rows; j++) {
+    let bestL = -1, bestR = -2, curL = -1;
+    for (let i = 0; i <= cols; i++) {
+      const ok = i < cols && cellIn(minU + i * HALF, v0 + j * HALF);
+      if (ok && curL < 0) curL = i;
+      if (!ok && curL >= 0) { if (i - 1 - curL > bestR - bestL) { bestL = curL; bestR = i - 1; } curL = -1; }
+    }
+    L.push(bestL); R.push(bestR);
+  }
+  // 底辺側から連続して入る行だけ使う（途中で切れたらそこまで）
+  let nRows = 0;
+  while (nRows < rows && L[nRows] >= 0) nRows++;
+  if (nRows === 0) return { u: 0, v: v0, w: 0, d: 0, notches: [], area: 0, cells: 0 };
+  const Ls = L.slice(0, nRows), Rs = R.slice(0, nRows);
+  // 左の輪郭を「最も左に出る行 j* まで単調に広がり、その先は単調に狭まる」形に丸める（マスを減らす方向）
+  const mono = (arr: number[], better: (a: number, b: number) => boolean) => {
+    const best = arr.reduce((bi, v, i) => (better(v, arr[bi]) ? i : bi), 0);
+    const out = [...arr];
+    for (let j = best - 1; j >= 0; j--) out[j] = better(out[j], out[j + 1]) ? out[j + 1] : out[j];
+    for (let j = best + 1; j < arr.length; j++) out[j] = better(out[j], out[j - 1]) ? out[j - 1] : out[j];
+    return out;
+  };
+  const Lm = mono(Ls, (a, b) => a < b); // 小さいほど左（広い）
+  const Rm = mono(Rs, (a, b) => a > b); // 大きいほど右（広い）
+  const Lmin = Math.min(...Lm), Rmax = Math.max(...Rm);
+  const wCells = Rmax - Lmin + 1;
+  const notches: Notch[] = [];
+  // 左側: 下から j* まで（SW）、j* から上（NW）。段が変わる行ごとに切り欠きを置く
+  const jL = Lm.indexOf(Lmin), jR = Rm.indexOf(Rmax);
+  const jLlast = Lm.lastIndexOf(Lmin), jRlast = Rm.lastIndexOf(Rmax);
+  for (let j = 0; j < jL; j++) if (Lm[j] > Lmin && (j === jL - 1 || Lm[j] > Lm[j + 1])) notches.push({ corner: "SW", w: round((Lm[j] - Lmin) * HALF, 3), d: round((j + 1) * HALF, 3) });
+  for (let j = nRows - 1; j > jLlast; j--) if (Lm[j] > Lmin && (j === jLlast + 1 || Lm[j] > Lm[j - 1])) notches.push({ corner: "NW", w: round((Lm[j] - Lmin) * HALF, 3), d: round((nRows - j) * HALF, 3) });
+  for (let j = 0; j < jR; j++) if (Rm[j] < Rmax && (j === jR - 1 || Rm[j] < Rm[j + 1])) notches.push({ corner: "SE", w: round((Rmax - Rm[j]) * HALF, 3), d: round((j + 1) * HALF, 3) });
+  for (let j = nRows - 1; j > jRlast; j--) if (Rm[j] < Rmax && (j === jRlast + 1 || Rm[j] < Rm[j - 1])) notches.push({ corner: "NE", w: round((Rmax - Rm[j]) * HALF, 3), d: round((nRows - j) * HALF, 3) });
+  let cells = 0;
+  for (let j = 0; j < nRows; j++) cells += Rm[j] - Lm[j] + 1;
+  return { u: round(minU + Lmin * HALF, 3), v: round(v0, 3), w: round(wCells * HALF, 3), d: round(nRows * HALF, 3), notches, area: round(cells * HALF * HALF, 3), cells };
 }

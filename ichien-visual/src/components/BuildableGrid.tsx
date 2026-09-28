@@ -4,7 +4,7 @@ import { useMemo, useRef } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
 import { insetPolygon, round, polygonArea, northScreenDeg, footprintArea, notchesOf, footprintPolygon } from "@/lib/geometry";
-import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, rectFits, modules, clearances, roadBands } from "@/lib/grid";
+import { baseFrame, toLocal, buildingFromGrid, snapHalf, maxRect, footprintFits, maxStair, modules, clearances, roadBands } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -46,7 +46,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const X = (u: number) => (flip ? (maxU - u) * PX : (u - minU) * PX);
   const Y = (v: number) => (flip ? (v - minV) * PX : (maxV - v) * PX);
 
-  const fits = rectFits(frame, inner, grid.u, grid.v, building.w, building.d);
+  const fits = footprintFits(frame, inner, grid, building);
   const area = site.areaOverride ?? polygonArea(site.points);
   const bArea = footprintArea(building);
   const notches = notchesOf(building);
@@ -71,6 +71,19 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     });
 
   const setNotches = (notches: Notch[]) => setProject((p) => ({ ...p, building: { ...p.building, notches } }));
+
+  /** 階段状の最大範囲: 底辺を離れ線に揃え、入るマスを全部拾う */
+  const autoStair = () => {
+    const r = maxStair(site, grid.baseEdge, setback, ((grid.u % HALF) + HALF) % HALF);
+    if (r.cells === 0) {
+      alert("離れ線の内側に455mm角が1つも入りません。離れの設定か境界点を確認してください。");
+      return;
+    }
+    setProject((p) => {
+      const g = { ...p.grid, u: r.u, v: r.v };
+      return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
+    });
+  };
 
   const autoMax = () => {
     const best = maxRect(site, grid.baseEdge, setback);
@@ -147,20 +160,22 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           <Stepper label="奥行（底辺から内側へ）" value={building.d} onChange={(v) => apply({ d: v })} />
           <Stepper label="位置：底辺の始点から" value={grid.u} onChange={(v) => apply({ u: v })} min={-50} />
           <Stepper label="位置：底辺から内側へ" value={grid.v} onChange={(v) => apply({ v: v })} min={-50} />
-          <button className="btn-primary w-full justify-center" onClick={autoMax}>離れ線の内側で最大の枠にする</button>
+          <button className="btn-primary w-full justify-center" onClick={autoStair}>離れ線の内側で最大の範囲にする（底辺に揃えて階段状）</button>
+          <button className="btn-ghost w-full justify-center" onClick={() => { setNotches([]); autoMax(); }}>矩形で最大にする（切り欠きなし）</button>
+          <p className="text-[11px] leading-relaxed text-slate-500">「最大の範囲」は、底辺（選んだ辺）から離れ {Math.round(setback * 1000)}mm の線に建物の底辺をぴったり揃え、残りの辺は敷地なりに455mm刻みで削った形です。限界まで建てたときの建築面積の目安になります。離れの数値は敷地図の「離れ」で変えられます（壁の芯までの距離として扱います）。</p>
           <div className="space-y-1 rounded border border-slate-200 p-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-700">角の切り欠き（L字・コの字にする）</span>
-              <select className="field w-auto px-1 py-0.5 text-xs" value="" onChange={(e) => { const c = e.target.value as Notch["corner"]; if (!c) return; setNotches([...(building.notches ?? []).filter((n) => n.corner !== c), { corner: c, w: MODULE, d: MODULE }]); }}>
-                <option value="">＋角を選ぶ</option>
-                {(["SW", "SE", "NE", "NW"] as const).filter((c) => !(building.notches ?? []).some((n) => n.corner === c)).map((c) => <option key={c} value={c}>{CORNER_LABEL[c]}</option>)}
+              <select className="field w-auto px-1 py-0.5 text-xs" value="" onChange={(e) => { const c = e.target.value as Notch["corner"]; if (!c) return; setNotches([...(building.notches ?? []), { corner: c, w: MODULE, d: MODULE }]); }}>
+                <option value="">＋角を選ぶ（同じ角に複数で階段状）</option>
+                {(["SW", "SE", "NE", "NW"] as const).map((c) => <option key={c} value={c}>{CORNER_LABEL[c]}</option>)}
               </select>
             </div>
-            {(building.notches ?? []).map((n) => (
-              <div key={n.corner} className="rounded bg-slate-50 p-1 text-xs">
-                <div className="flex items-center justify-between"><b>{CORNER_LABEL[n.corner]}</b><button className="btn-ghost px-2 py-0 text-red-500" onClick={() => setNotches((building.notches ?? []).filter((x) => x.corner !== n.corner))}>✕</button></div>
-                <Stepper label="幅方向" value={n.w} onChange={(v) => setNotches((building.notches ?? []).map((x) => (x.corner === n.corner ? { ...x, w: Math.min(Math.max(HALF, snapHalf(v)), building.w - HALF) } : x)))} />
-                <Stepper label="奥行方向" value={n.d} onChange={(v) => setNotches((building.notches ?? []).map((x) => (x.corner === n.corner ? { ...x, d: Math.min(Math.max(HALF, snapHalf(v)), building.d - HALF) } : x)))} />
+            {(building.notches ?? []).map((n, i) => (
+              <div key={i} className="rounded bg-slate-50 p-1 text-xs">
+                <div className="flex items-center justify-between"><b>{CORNER_LABEL[n.corner]}</b><button className="btn-ghost px-2 py-0 text-red-500" onClick={() => setNotches((building.notches ?? []).filter((_, j) => j !== i))}>✕</button></div>
+                <Stepper label="幅方向" value={n.w} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, w: Math.min(Math.max(HALF, snapHalf(v)), building.w - HALF) } : x)))} />
+                <Stepper label="奥行方向" value={n.d} onChange={(v) => setNotches((building.notches ?? []).map((x, j) => (j === i ? { ...x, d: Math.min(Math.max(HALF, snapHalf(v)), building.d - HALF) } : x)))} />
               </div>
             ))}
             {!(building.notches ?? []).length && <p className="text-[11px] text-slate-500">矩形以外の建物は、外接する枠を決めてから角を切り欠きます。建築面積・斜線・天空率・日影は切り欠き後の形で計算します。</p>}

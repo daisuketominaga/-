@@ -780,7 +780,7 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
       {Array.from({ length: Math.floor(b.d / HALF + 1e-6) }, (_, i) => (i + 1) * HALF).map((v) => (
         <line key={"gv" + v} x1={ox} y1={oy + (b.d - v) * px} x2={ox + b.w * px} y2={oy + (b.d - v) * px} stroke={Math.abs((v / MODULE) % 1) < 1e-6 || Math.abs((v / MODULE) % 1 - 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} style={{ pointerEvents: "none" }} />
       ))}
-      {notchesOf(b).map((n) => { const r = notchRect(b, n); const p0 = toPx(r.x0, r.y1); const p1 = toPx(r.x1, r.y0); return <rect key={"notch" + n.corner} x={Math.min(p0.x, p1.x)} y={Math.min(p0.y, p1.y)} width={n.w * px} height={n.d * px} fill="#fff" data-bg="1" />; })}
+      {notchesOf(b).map((n, ni) => { const r = notchRect(b, n); const p0 = toPx(r.x0, r.y1); const p1 = toPx(r.x1, r.y0); return <rect key={"notch" + ni} x={Math.min(p0.x, p1.x)} y={Math.min(p0.y, p1.y)} width={n.w * px} height={n.d * px} fill="#fff" data-bg="1" />; })}
       {floor.rooms.map((r) => {
         const p0 = toPx(r.x, r.y + r.d);
         const p1 = toPx(r.x + r.w, r.y);

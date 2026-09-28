@@ -312,21 +312,53 @@ export function insideFootprint(b: Building, x: number, y: number, tol = 0): boo
   return true;
 }
 
-/** 建築面積（切り欠きを引いた外形の面積）。切り欠き同士は重ならない前提 */
-export function footprintArea(b: Building): number {
-  return b.w * b.d - notchesOf(b).reduce((s, n) => s + n.w * n.d, 0);
+
+/**
+ * 角ごとの切り欠きを「階段」にまとめる: 同じ角の矩形の和集合の境界を、その角を原点にした (a=角からの幅方向, b=奥行方向) で返す。
+ * 返す点列は、幅方向の辺上の点 (aMax, 0) から始まり、奥行方向の辺上の点 (0, bMax) で終わる階段。
+ */
+function cornerStair(ns: Notch[]): { a: number; b: number }[] {
+  if (!ns.length) return [];
+  // 幅 a 昇順に並べ、他に含まれる矩形（a も b も小さい）は捨てる → b は狭義単調減少
+  const sorted = [...ns].map((n) => ({ a: n.w, b: n.d })).sort((p, q) => p.a - q.a || q.b - p.b);
+  const pareto: { a: number; b: number }[] = [];
+  for (const r of sorted) {
+    while (pareto.length && pareto[pareto.length - 1].b <= r.b + 1e-9 && pareto[pareto.length - 1].a <= r.a + 1e-9) pareto.pop();
+    if (!pareto.length || r.b < pareto[pareto.length - 1].b - 1e-9) pareto.push(r);
+  }
+  // 階段: (aK, 0) → (aK, bK) → (aK-1, bK) → (aK-1, bK-1) → … → (a1, b1) → (0, b1)
+  const pts: { a: number; b: number }[] = [];
+  const k = pareto.length;
+  pts.push({ a: pareto[k - 1].a, b: 0 });
+  for (let i = k - 1; i >= 0; i--) {
+    pts.push({ a: pareto[i].a, b: pareto[i].b });
+    if (i > 0) pts.push({ a: pareto[i - 1].a, b: pareto[i].b });
+  }
+  pts.push({ a: 0, b: pareto[0].b });
+  return pts;
 }
 
-/** 外形の多角形（建物座標、反時計回り: 底辺左から） */
+/** 外形の多角形（建物座標、反時計回り: 底辺左から）。角ごとに複数の切り欠き（階段状）に対応 */
 export function footprintPolygon(b: Building): Pt[] {
-  const by = (c: Notch["corner"]) => notchesOf(b).find((n) => n.corner === c);
-  const sw = by("SW"), se = by("SE"), ne = by("NE"), nw = by("NW");
+  const ns = notchesOf(b);
+  const by = (c: Notch["corner"]) => ns.filter((n) => n.corner === c);
   const pts: Pt[] = [];
-  if (sw) pts.push({ x: 0, y: sw.d }, { x: sw.w, y: sw.d }, { x: sw.w, y: 0 }); else pts.push({ x: 0, y: 0 });
-  if (se) pts.push({ x: b.w - se.w, y: 0 }, { x: b.w - se.w, y: se.d }, { x: b.w, y: se.d }); else pts.push({ x: b.w, y: 0 });
-  if (ne) pts.push({ x: b.w, y: b.d - ne.d }, { x: b.w - ne.w, y: b.d - ne.d }, { x: b.w - ne.w, y: b.d }); else pts.push({ x: b.w, y: b.d });
-  if (nw) pts.push({ x: nw.w, y: b.d }, { x: nw.w, y: b.d - nw.d }, { x: 0, y: b.d - nw.d }); else pts.push({ x: 0, y: b.d });
-  return pts;
+  // 各角の階段を、反時計回りの向きに合わせて建物座標へ写す
+  const sw = cornerStair(by("SW")); // 原点 (0,0)、a=+x、b=+y。反時計回りでは (0,b)… → (a,0) の順
+  if (sw.length) for (const q of [...sw].reverse()) pts.push({ x: q.a, y: q.b }); else pts.push({ x: 0, y: 0 });
+  const se = cornerStair(by("SE")); // 原点 (w,0)、a=-x、b=+y。順: (a,0)=(w-a,0) → … → (0,b)=(w,b)
+  if (se.length) for (const q of se) pts.push({ x: b.w - q.a, y: q.b }); else pts.push({ x: b.w, y: 0 });
+  const ne = cornerStair(by("NE")); // 原点 (w,d)、a=-x、b=-y。順: (0,b)=(w,d-b) → … → (a,0)=(w-a,d)
+  if (ne.length) for (const q of [...ne].reverse()) pts.push({ x: b.w - q.a, y: b.d - q.b }); else pts.push({ x: b.w, y: b.d });
+  const nw = cornerStair(by("NW")); // 原点 (0,d)、a=+x、b=-y。順: (a,0)=(a,d) → … → (0,b)=(0,d-b)
+  if (nw.length) for (const q of nw) pts.push({ x: q.a, y: b.d - q.b }); else pts.push({ x: 0, y: b.d });
+  // 連続する同じ点を落とす
+  return pts.filter((q, i) => i === 0 || Math.abs(q.x - pts[i - 1].x) > 1e-9 || Math.abs(q.y - pts[i - 1].y) > 1e-9);
+}
+
+/** 建築面積（切り欠きを引いた外形の面積） */
+export function footprintArea(b: Building): number {
+  return polygonArea(footprintPolygon(b));
 }
 
 /** 外形を重ならない矩形に分割（建物座標）。天空率・日影の立体を作るのに使う */
