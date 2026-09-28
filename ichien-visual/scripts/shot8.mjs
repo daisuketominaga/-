@@ -1,6 +1,6 @@
 // 同名部屋の合体の確認: node scripts/shot8.mjs <base> <out>
 import { chromium } from "playwright";
-const [base = "http://localhost:3131", out = "/tmp/shots"] = process.argv.slice(2);
+const [base = "http://localhost:3132", out = "/tmp/shots"] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
 page.on("dialog", (d) => d.accept());
