@@ -8,3 +8,7 @@ console.log("eff area", polygonArea(e.points).toFixed(3), "strip", setbackStripA
 // rectangle with west edge setback
 const r:any = { points:[{x:0,y:0},{x:0,y:10},{x:8,y:10},{x:8,y:0}], edges:[{index:0,road:true,roadWidth:2,roadSetback:1}], northDeg:0, coverageRatio:60, farRatio:200, setback:0.5, fireproofException:false };
 console.log(effectiveSite(r).points, setbackStripArea(r));
+// 離れ線: 後退で重なった点があっても角まで行かないこと
+import { insetPolygon } from "../src/lib/geometry";
+const ins = insetPolygon(e.points, 0.6);
+console.log("inset", ins.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(" | "));

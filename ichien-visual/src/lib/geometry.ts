@@ -71,12 +71,25 @@ export function insetPolygon(pts: Pt[], offset: number): Pt[] {
       d: { x: dx, y: dy },
     });
   }
+  // 長さ0の辺（道路後退で重なった点など）は無視して、前後の「長さのある辺」どうしの交点を取る
+  const ok = lines.map((l) => Math.hypot(l.d.x, l.d.y) > 1e-6);
   const out: Pt[] = [];
   for (let i = 0; i < n; i++) {
-    const prev = lines[(i - 1 + n) % n];
-    const cur = lines[i];
-    const ip = lineIntersect(prev.p, prev.d, cur.p, cur.d);
-    out.push(ip ?? pts[i]);
+    let pi = (i - 1 + n) % n;
+    for (let k = 0; k < n && !ok[pi]; k++) pi = (pi - 1 + n) % n;
+    let ci = i;
+    for (let k = 0; k < n && !ok[ci]; k++) ci = (ci + 1) % n;
+    const prev = lines[pi];
+    const cur = lines[ci];
+    const ip = ok[pi] && ok[ci] ? lineIntersect(prev.p, prev.d, cur.p, cur.d) : null;
+    if (ip) { out.push(ip); continue; }
+    // 平行（ほぼ一直線）のときは、辺を法線方向へずらした点で代用する
+    const l = ok[ci] ? cur : prev;
+    const len = Math.hypot(l.d.x, l.d.y) || 1;
+    const a0 = pts[i];
+    const nx = ccw ? -l.d.y / len : l.d.y / len;
+    const ny = ccw ? l.d.x / len : -l.d.x / len;
+    out.push({ x: a0.x + nx * offset, y: a0.y + ny * offset });
   }
   return out;
 }
