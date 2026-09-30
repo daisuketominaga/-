@@ -60,25 +60,41 @@ export async function readSurvey(image: SurveyImage | SurveyImage[], hint?: stri
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY が設定されていません（Vercelの環境変数に追加してください）");
   const images = Array.isArray(image) ? image : [image];
   const client = new Anthropic({ apiKey });
-  // 長い応答でも接続が切れないようストリーミングで受けて最後のメッセージだけ使う
-  const msg = await client.messages.stream({
-    model: MODEL,
-    max_tokens: 6000,
-    system: SYSTEM,
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...images.flatMap((im, i) => [
-            { type: "text" as const, text: images.length > 1 ? (i === 0 ? "【画像1: 測量図】" : `【画像${i + 1}: 販売図面・区画図など（道路・後退・面積の補足用）】`) : "【測量図】" },
-            { type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.b64 } },
-          ]),
-          { type: "text", text: `${images.length > 1 ? "測量図を主に、販売図面で道路・後退・面積を補って" : "この測量図を"}読み取ってJSONで返してください。${hint ? "補足: " + hint : ""}` },
-        ],
-      },
-    ],
-  }).finalMessage();
-  const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: [
+        ...images.flatMap((im, i) => [
+          { type: "text" as const, text: images.length > 1 ? (i === 0 ? "【画像1: 測量図】" : `【画像${i + 1}: 販売図面・区画図など（道路・後退・面積の補足用）】`) : "【測量図】" },
+          { type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.b64 } },
+        ]),
+        { type: "text", text: `${images.length > 1 ? "測量図を主に、販売図面で道路・後退・面積を補って" : "この測量図を"}読み取ってJSONで返してください。${hint ? "補足: " + hint : ""}` },
+      ],
+    },
+  ];
+  // 長い応答でも接続が切れないようストリーミングで受けて最後のメッセージだけ使う。
+  // 思考（thinking）に出力枠を使い切って本文が空になる（stop=max_tokens・文字数0）ことがあるので、
+  // まず「考える量を少なく」で呼び、それでも本文が空なら「考えない」で呼び直す
+  const ask = (thinking: "low" | "off") =>
+    client.messages
+      .stream({
+        model: MODEL,
+        max_tokens: 8000,
+        system: SYSTEM,
+        messages,
+        ...(thinking === "off" ? { thinking: { type: "disabled" as const } } : { thinking: { type: "adaptive" as const }, output_config: { effort: "low" as const } }),
+      })
+      .finalMessage();
+  const textOf = (m: Anthropic.Message) => m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+  const t0 = Date.now();
+  let msg = await ask("low");
+  let text = textOf(msg);
+  if (!text.trim()) {
+    console.log("survey read: empty text", msg.stop_reason, "retry without thinking");
+    msg = await ask("off");
+    text = textOf(msg);
+  }
+  console.log("survey read", Date.now() - t0, "ms", "images", images.length, "out", msg.usage.output_tokens, "stop", msg.stop_reason);
   let json: Record<string, unknown>;
   try {
     // ```json フェンスや前置きがあっても、最初の { から最後の } までを取る
