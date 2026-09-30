@@ -403,7 +403,7 @@ export function lessonProject4(): Project {
       effectiveAreaOverride: 80.28,
       coverageRatio: 60,
       farRatio: 200,
-      setback: 0.5,
+      setback: 0.6,
       fireproofException: false,
       roadLevelDiff: 0,
       cornerLot: false,

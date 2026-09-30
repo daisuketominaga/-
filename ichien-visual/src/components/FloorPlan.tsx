@@ -846,6 +846,12 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
   const groups = roomGroups(floor.rooms);
   return (
     <g>
+      <defs>
+        <clipPath id={`fp-clip-${lv}-${ox}-${oy}`}>
+          <polygon points={footprintPolygon(b).map((q) => { const t = toPx(q.x, q.y); return `${t.x},${t.y}`; }).join(" ")} />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#fp-clip-${lv}-${ox}-${oy})`}>
       <rect x={ox} y={oy} width={b.w * px} height={b.d * px} fill="#fbf7ef" stroke="none" data-bg="1" />
       {Array.from({ length: Math.floor(b.w / HALF + 1e-6) }, (_, i) => (i + 1) * HALF).map((u) => (
         <line key={"gu" + u} x1={ox + u * px} y1={oy} x2={ox + u * px} y2={oy + b.d * px} stroke={Math.abs((u / MODULE) % 1) < 1e-6 || Math.abs((u / MODULE) % 1 - 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} style={{ pointerEvents: "none" }} />
@@ -853,7 +859,9 @@ export function FloorSvg({ floor, project, ox, oy, px, sel, overlapIds, onSelect
       {Array.from({ length: Math.floor(b.d / HALF + 1e-6) }, (_, i) => (i + 1) * HALF).map((v) => (
         <line key={"gv" + v} x1={ox} y1={oy + (b.d - v) * px} x2={ox + b.w * px} y2={oy + (b.d - v) * px} stroke={Math.abs((v / MODULE) % 1) < 1e-6 || Math.abs((v / MODULE) % 1 - 1) < 1e-6 ? "#d8dee8" : "#eef1f5"} strokeWidth={0.8} style={{ pointerEvents: "none" }} />
       ))}
-      {notchesOf(b).map((n, ni) => { const r = notchRect(b, n); const p0 = toPx(r.x0, r.y1); const p1 = toPx(r.x1, r.y0); return <rect key={"notch" + ni} x={Math.min(p0.x, p1.x)} y={Math.min(p0.y, p1.y)} width={n.w * px} height={n.d * px} fill="#fff" data-bg="1" />; })}
+      </g>
+      {/* 切り欠き部分: 敷地が透けて見えるように塗らない。クリックで部屋を置けないよう透明の当たり判定だけ置く */}
+      {notchesOf(b).map((n, ni) => { const r = notchRect(b, n); const p0 = toPx(r.x0, r.y1); const p1 = toPx(r.x1, r.y0); return <rect key={"notch" + ni} x={Math.min(p0.x, p1.x)} y={Math.min(p0.y, p1.y)} width={n.w * px} height={n.d * px} fill="transparent" data-bg="1" />; })}
       {floor.rooms.map((r) => {
         const p0 = toPx(r.x, r.y + r.d);
         const p1 = toPx(r.x + r.w, r.y);

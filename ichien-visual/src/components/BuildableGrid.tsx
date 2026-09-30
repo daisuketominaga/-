@@ -80,8 +80,23 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const setNotches = (notches: Notch[]) => setProject((p) => ({ ...p, building: { ...p.building, notches } }));
 
   /** 階段状の最大範囲: 底辺を離れ線に揃え、入るマスを全部拾う */
+  /** 離れ線の左端（底辺の1マス目の高さでの u）。ここにマスの境界を合わせると、左も離れ線ぴったりになる */
+  const leftEdgeU = () => {
+    const v = setback + unit / 2;
+    let best = Infinity;
+    for (let i = 0; i < innerLoc.length; i++) {
+      const a = innerLoc[i], c = innerLoc[(i + 1) % innerLoc.length];
+      if ((a.y <= v && c.y >= v) || (c.y <= v && a.y >= v)) {
+        if (Math.abs(c.y - a.y) < 1e-9) { best = Math.min(best, a.x, c.x); continue; }
+        const t = (v - a.y) / (c.y - a.y);
+        best = Math.min(best, a.x + (c.x - a.x) * t);
+      }
+    }
+    return Number.isFinite(best) ? best : grid.u;
+  };
   const autoStair = () => {
-    const r = maxStair(site, grid.baseEdge, setback, ((grid.u % unit) + unit) % unit, unit);
+    const u0 = leftEdgeU();
+    const r = maxStair(site, grid.baseEdge, setback, ((u0 % unit) + unit) % unit, unit);
     if (r.cells === 0) {
       alert(`離れ線の内側に${Math.round(unit * 1000)}mm角が1つも入りません。離れの設定か境界点を確認してください。`);
       return;
@@ -89,6 +104,24 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     setProject((p) => {
       const g = { ...p.grid, u: r.u, v: r.v };
       return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
+    });
+  };
+
+  /** 枠を離れ線にぴったり寄せる（左／右／奥／手前）。離れ線の内側に収まる範囲で、その向きへ最大まで動かす（1mm 刻み） */
+  const pushTo = (dir: "left" | "right" | "far" | "near") => {
+    const g0 = { ...grid };
+    const fitsAt = (t: number) => {
+      const g = { ...g0, u: dir === "left" ? g0.u - t : dir === "right" ? g0.u + t : g0.u, v: dir === "far" ? g0.v + t : dir === "near" ? g0.v - t : g0.v };
+      return footprintFits(frame, inner, g, building);
+    };
+    if (!fitsAt(0)) { setCellHint("今の枠が離れ線からはみ出しているので、先に内側へ動かしてください。"); return; }
+    let lo = 0, hi = 0.001;
+    while (hi < 20 && fitsAt(hi)) { lo = hi; hi *= 2; }
+    for (let k = 0; k < 20; k++) { const m = (lo + hi) / 2; if (fitsAt(m)) lo = m; else hi = m; }
+    const t = Math.floor(lo * 1000) / 1000;
+    setProject((p) => {
+      const g = { ...p.grid, u: round(dir === "left" ? p.grid.u - t : dir === "right" ? p.grid.u + t : p.grid.u, 4), v: round(dir === "far" ? p.grid.v + t : dir === "near" ? p.grid.v - t : p.grid.v, 4) };
+      return { ...p, grid: g, building: buildingFromGrid(p.site, g, p.building.w, p.building.d, p.building) };
     });
   };
 
@@ -309,6 +342,16 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           <Stepper label="奥行（底辺から内側へ）" value={building.d} onChange={(v) => apply({ d: v })} />
           <Stepper label="位置：底辺の始点から" value={grid.u} onChange={(v) => apply({ u: v })} min={-50} />
           <Stepper label="位置：底辺から内側へ" value={grid.v} onChange={(v) => apply({ v: v })} min={-50} />
+          <div className="rounded bg-slate-50 p-2 text-[11px] text-slate-600">
+            <div className="mb-1">枠を離れ線（境界から {Math.round(setback * 1000)}mm）にぴったり寄せる</div>
+            <div className="grid grid-cols-4 gap-1">
+              <button className="btn-ghost px-1 py-0.5" onClick={() => pushTo("left")}>← 左</button>
+              <button className="btn-ghost px-1 py-0.5" onClick={() => pushTo("right")}>右 →</button>
+              <button className="btn-ghost px-1 py-0.5" onClick={() => pushTo("near")}>↓ 底辺側</button>
+              <button className="btn-ghost px-1 py-0.5" onClick={() => pushTo("far")}>↑ 奥</button>
+            </div>
+            {cellHint && mode === "move" && <div className="mt-1 text-red-700">{cellHint}</div>}
+          </div>
           <button className="btn-primary w-full justify-center" onClick={autoStair}>離れ線の内側で最大の範囲にする（底辺に揃えて階段状）</button>
           <button className="btn-ghost w-full justify-center" onClick={() => { setNotches([]); autoMax(); }}>矩形で最大にする（切り欠きなし）</button>
           <p className="text-[11px] leading-relaxed text-slate-500">「最大の範囲」は、底辺（選んだ辺）から離れ {Math.round(setback * 1000)}mm の線に建物の底辺をぴったり揃え、残りの辺は敷地なりに455mm刻みで削った形です。限界まで建てたときの建築面積の目安になります。離れの数値は敷地図の「離れ」で変えられます（壁の芯までの距離として扱います）。</p>
