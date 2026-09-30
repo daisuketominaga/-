@@ -4,14 +4,16 @@ import { useState } from "react";
 import type { Site } from "@/lib/types";
 import { fileToDataUrl, pdfToDataUrl, shrink } from "@/lib/imageInput";
 
-type Props = { onResult: (s: Partial<Site>) => void };
+type RoadEv = { index: number; label: string; width?: number; setback?: number; neighbor: string; evidence: string; confidence: string };
+type Props = { onResult: (s: Partial<Site>) => void; onUnroad?: (index: number) => void; pointCount?: number };
 
-export default function SurveyImport({ onResult }: Props) {
+export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string[]>([]);
   const [hint, setHint] = useState("");
   const [coords, setCoords] = useState<{ label: string; X: number; Y: number }[] | null>(null);
+  const [roadEv, setRoadEv] = useState<RoadEv[]>([]);
 
   const handle = async (files: File[]) => {
     setBusy(true);
@@ -33,7 +35,7 @@ export default function SurveyImport({ onResult }: Props) {
         body: JSON.stringify({ images: urls, hint }),
       });
       const raw = await res.text();
-      let json: { site?: Partial<Site>; coords?: unknown; notes?: string; error?: string };
+      let json: { site?: Partial<Site>; coords?: unknown; notes?: string; error?: string; roadEvidence?: RoadEv[] };
       try {
         json = JSON.parse(raw);
       } catch {
@@ -43,6 +45,7 @@ export default function SurveyImport({ onResult }: Props) {
       if (!json.site?.points) throw new Error("読み取り結果に境界点がありません");
       onResult(json.site);
       setCoords(Array.isArray(json.coords) && json.coords.length ? (json.coords as { label: string; X: number; Y: number }[]) : null);
+      setRoadEv(Array.isArray(json.roadEvidence) ? json.roadEvidence : []);
       setMsg(`読み取りました：境界点 ${json.site.points.length} 点。${json.notes ?? ""} 数字は必ず測量図と見比べて、違う所は左の表で直してください。`);
     } catch (e) {
       setMsg("エラー: " + (e as Error).message);
@@ -72,6 +75,31 @@ export default function SurveyImport({ onResult }: Props) {
       <input className="field" placeholder="補足（例: 西側が4m公道、面積79.43㎡）" value={hint} onChange={(e) => setHint(e.target.value)} />
       {busy && <div className="text-xs text-brand-700">読み取り中… 1枚で20〜40秒、2枚だと1〜2分かかります</div>}
       {msg && <div className={`text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
+      {roadEv.length > 0 && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-900">
+          <div className="font-semibold">道路と判断した辺（根拠を確認してください）</div>
+          <ul className="mt-1 space-y-1">
+            {roadEv.map((r) => {
+              const n = pointCount ?? 0;
+              const to = n ? ((r.index + 1) % n) + 1 : r.index + 2;
+              return (
+                <li key={r.index} className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <div>
+                      <b>P{r.index + 1}→P{to}</b>　{r.label}　幅員 {r.width ?? "?"}m{r.setback ? `・後退 ${r.setback}m` : ""}　{r.confidence === "low" ? <span className="text-red-700">（推測・要確認）</span> : ""}
+                    </div>
+                    <div className="text-amber-800">外側: {r.neighbor || "不明"}{r.evidence ? `／根拠: ${r.evidence}` : ""}</div>
+                  </div>
+                  {onUnroad && (
+                    <button className="btn-ghost shrink-0 px-2 py-0.5 text-[11px]" onClick={() => { onUnroad(r.index); setRoadEv((l) => l.filter((x) => x.index !== r.index)); }}>道路ではない</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-1 text-amber-800">道路でない辺があれば「道路ではない」を押してください。道路がまだ足りなければ、下の「辺ごとの道路・後退」でチェックできます。</div>
+        </div>
+      )}
       {coords && (
         <details className="text-xs" open>
           <summary className="cursor-pointer text-slate-600">求積表の座標と、そこから計算した辺の長さ</summary>

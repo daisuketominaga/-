@@ -24,6 +24,9 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
 - 両面道路・角地: 道路に接する辺は1つとは限らない。敷地の複数の辺（向かい合う2辺や隣り合う2辺）に道路があれば、それぞれの辺を road:true にする。境界点図で敷地の東西それぞれに道路名（「市道○号」「県道○○線」など）が書かれていたら両面道路。
 - 道路後退（セットバック）: 幅員が4m未満の道路（法42条2項道路）に接する辺は、道路中心から2m（＝(4 − 幅員) ÷ 2 だけ敷地側へ）後退が必要。その辺に roadSetback（m）を入れる。販売図面や区画図に後退線（点線）と「道路後退部分 ○㎡」「有効宅地 ○㎡」の記載があれば、その数字から後退幅を逆算して roadSetback に入れ、後退後の面積を effectiveArea に入れる。
 - 画像が複数あるとき: 1枚目が測量図（座標・辺長の根拠）、2枚目以降は販売図面・区画図・公図など。境界点座標と辺長は測量図を優先し、道路の位置・幅員・種別・後退・面積は販売図面の記載で補う（販売図面の区画図は道路の帯や「法42条○項」「幅員約○m」「後退」「有効面積」が書かれていることが多い）。図面どうしで辺長が食い違うときは notes に書く。
+- 道路の判断は辺ごとに根拠を示す: 各辺について、その辺の外側に何があるか（例「市道A-144号」「県道酒井・金田線」「地番1996-1」「地番2004-5」「水路」「不明」）を "neighbor" に書き、道路と判断した辺は "evidence" にその根拠（図のどの文字・帯を見たか）を1行で書く。外側に地番（例 1996-1、2004-5）が書かれている辺は隣地であり、道路にしてはいけない。
+- 同じ道路名を2つの辺に付けてよいのは角地（2つの辺が隣り合っていて、図でも道路がその角を回り込んでいる）だけ。向かい合う辺や離れた辺に同じ道路名を付けない。道路が敷地の1辺にしか接していないのに、その道路の延長線が別の辺の近くを通っているだけの場合は、その別の辺は道路ではない。
+- 道路と判断した辺には "confidence" に "high"（道路名や幅員が図に明記されている）か "low"（帯の形などからの推測）を書く。
 - 面積: 測量図に地積があればそれを areaOverride に。無ければ座標から計算した値を areaOverride に入れずに省略する（アプリが座標から計算する）。販売図面の「土地面積」が後退後の有効面積である場合は effectiveArea に入れ、areaOverride には入れない。
 
 返すJSONの形:
@@ -31,8 +34,9 @@ const SYSTEM = `あなたは日本の不動産測量図（確定測量図・地�
   "points": [{"x":0.42,"y":9.19}, ...],
   "edges": [
     {"index":0,"length":8.40},
-    {"index":2,"length":9.45,"road":true,"roadWidth":1.8,"roadSetback":1.1,"roadLabel":"法42条2項 公道 市道A-144号"},
-    {"index":4,"length":7.63,"road":true,"roadWidth":16.0,"roadLabel":"法42条1項1号 県道○○線","note":"NTT柱有"}
+    {"index":1,"length":7.99,"neighbor":"地番1996-1（隣地）"},
+    {"index":2,"length":9.45,"road":true,"roadWidth":1.8,"roadSetback":1.1,"roadLabel":"法42条2項 公道 市道A-144号","neighbor":"市道A-144号","evidence":"境界点図の西側に「市道A-144号」、販売図面に「法42条2項(公道) 約1.8m」","confidence":"high"},
+    {"index":4,"length":7.63,"road":true,"roadWidth":16.0,"roadLabel":"法42条1項1号 県道○○線","neighbor":"県道○○線","evidence":"販売図面の東側に「法42条1項1号 約16.0m」","confidence":"high","note":"NTT柱有"}
   ],
   "areaOverride": 79.43,
   "effectiveArea": 69.11,
@@ -49,6 +53,8 @@ export type SurveyResult = {
   coords: { label: string; X: number; Y: number }[] | null;
   coordSystem: string | null;
   notes: string;
+  /** 道路と判断した辺と、その根拠（画面で確認して外せるように） */
+  roadEvidence?: { index: number; label: string; width?: number; setback?: number; neighbor: string; evidence: string; confidence: string }[];
   usage: unknown;
 };
 
@@ -129,8 +135,42 @@ export async function readSurvey(image: SurveyImage | SurveyImage[], hint?: stri
         ...(typeof e.note === "string" && e.note ? { note: e.note } : {}),
       };
     });
+  // ---- 道路の矛盾チェック（AIの勘違いを機械的に外す）----
+  const removed: string[] = [];
+  const rawEdges = (Array.isArray(json.edges) ? (json.edges as Record<string, unknown>[]) : []);
+  const info = (idx: number) => rawEdges.find((e) => e.index === idx) ?? {};
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const n = points.length;
+  const edgeLen = (i: number) => { const a = points[i], b = points[(i + 1) % n]; return Math.hypot(b.x - a.x, b.y - a.y); };
+  const norm = (s: string) => s.replace(/\s|　|（.*?）|\(.*?\)|公道|私道|市道|県道|国道|町道|村道|法42条[0-9０-９]+項[0-9０-９]*号?/g, "");
+  // 1) 外側が地番（例 1996-1）の辺は隣地
+  for (const e of edges) {
+    if (!e.road) continue;
+    const nb = str(info(e.index).neighbor);
+    if (/\d{2,}\s*[-－ー−]\s*\d+/.test(nb) && !/道路|市道|県道|国道|公道|私道|道/.test(nb)) {
+      removed.push(`P${e.index + 1}→P${((e.index + 1) % n) + 1}（外側は地番 ${nb}）`);
+      delete e.road; delete e.roadWidth; delete e.roadSetback; delete e.roadLabel;
+    }
+  }
+  // 2) 同じ道路名が隣り合わない2辺に付いていたら、根拠の弱い方（confidence low → 短い辺）を外す
+  const roads = edges.filter((e) => e.road && e.roadLabel);
+  for (let a = 0; a < roads.length; a++) for (let b = a + 1; b < roads.length; b++) {
+    const ea = roads[a], eb = roads[b];
+    if (!ea.road || !eb.road) continue;
+    const na = norm(ea.roadLabel ?? ""), nbb = norm(eb.roadLabel ?? "");
+    if (!na || na !== nbb) continue;
+    const adjacent = (ea.index + 1) % n === eb.index || (eb.index + 1) % n === ea.index;
+    if (adjacent) continue;
+    const ca = str(info(ea.index).confidence), cb = str(info(eb.index).confidence);
+    let drop = eb;
+    if (ca === "low" && cb !== "low") drop = ea;
+    else if (ca === cb) drop = edgeLen(ea.index) < edgeLen(eb.index) ? ea : eb;
+    removed.push(`P${drop.index + 1}→P${((drop.index + 1) % n) + 1}（「${drop.roadLabel}」が離れた2辺に付いていたため）`);
+    delete drop.road; delete drop.roadWidth; delete drop.roadSetback; delete drop.roadLabel;
+  }
+  const roadEvidence = edges.filter((e) => e.road).map((e) => ({ index: e.index, label: e.roadLabel ?? "道路", width: e.roadWidth, setback: e.roadSetback, neighbor: str(info(e.index).neighbor), evidence: str(info(e.index).evidence), confidence: str(info(e.index).confidence) }));
   const roadCount = edges.filter((e) => e.road).length;
-  const notes2 = [notes, roadCount === 0 ? "道路に接する辺が読み取れませんでした。左の「辺ごとの道路・後退」で道路の辺にチェックしてください。" : roadCount >= 2 ? `道路に接する辺を ${roadCount} つ読み取りました（両面道路・角地）。` : null].filter(Boolean).join(" ");
+  const notes2 = [notes, removed.length ? `道路の判定を自動で外した辺: ${removed.join("、")}。` : null, roadCount === 0 ? "道路に接する辺が読み取れませんでした。左の「辺ごとの道路・後退」で道路の辺にチェックしてください。" : roadCount >= 2 ? `道路に接する辺を ${roadCount} つ読み取りました（両面道路・角地）。` : null].filter(Boolean).join(" ");
   return {
     site: {
       points,
@@ -142,6 +182,7 @@ export async function readSurvey(image: SurveyImage | SurveyImage[], hint?: stri
     coords: Array.isArray(json.coords) ? (json.coords as { label: string; X: number; Y: number }[]) : null,
     coordSystem,
     notes: notes2,
+    roadEvidence,
     usage: msg.usage,
   };
 }

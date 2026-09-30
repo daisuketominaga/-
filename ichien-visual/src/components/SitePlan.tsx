@@ -125,6 +125,8 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
       {!readOnly && (
       <aside className="space-y-4">
         <SurveyImport
+          pointCount={site.points.length}
+          onUnroad={(i) => setEdge(i, { road: false, roadWidth: undefined, roadSetback: undefined, roadLabel: undefined })}
           onResult={(s) =>
             setProject((p) => ({
               ...p,
