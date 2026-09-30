@@ -60,7 +60,8 @@ export async function readSurvey(image: SurveyImage | SurveyImage[], hint?: stri
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY が設定されていません（Vercelの環境変数に追加してください）");
   const images = Array.isArray(image) ? image : [image];
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
+  // 長い応答でも接続が切れないようストリーミングで受けて最後のメッセージだけ使う
+  const msg = await client.messages.stream({
     model: MODEL,
     max_tokens: 6000,
     system: SYSTEM,
@@ -76,7 +77,7 @@ export async function readSurvey(image: SurveyImage | SurveyImage[], hint?: stri
         ],
       },
     ],
-  });
+  }).finalMessage();
   const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("");
   let json: Record<string, unknown>;
   try {

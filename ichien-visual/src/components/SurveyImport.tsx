@@ -32,10 +32,17 @@ export default function SurveyImport({ onResult }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ images: urls, hint }),
       });
-      const json = await res.json();
+      const raw = await res.text();
+      let json: { site?: Partial<Site>; coords?: unknown; notes?: string; error?: string };
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        throw new Error(res.status === 504 || /timed out|Timeout/i.test(raw) ? "サーバーの制限時間内に読み取りが終わりませんでした。もう一度試すか、画像を1枚ずつ（先に測量図、次に販売図面）読み込ませてください。" : `サーバーがエラーを返しました（${res.status}）: ${raw.slice(0, 120)}`);
+      }
       if (!res.ok) throw new Error(json.error || "読み取りに失敗しました");
+      if (!json.site?.points) throw new Error("読み取り結果に境界点がありません");
       onResult(json.site);
-      setCoords(Array.isArray(json.coords) && json.coords.length ? json.coords : null);
+      setCoords(Array.isArray(json.coords) && json.coords.length ? (json.coords as { label: string; X: number; Y: number }[]) : null);
       setMsg(`読み取りました：境界点 ${json.site.points.length} 点。${json.notes ?? ""} 数字は必ず測量図と見比べて、違う所は左の表で直してください。`);
     } catch (e) {
       setMsg("エラー: " + (e as Error).message);
@@ -43,6 +50,7 @@ export default function SurveyImport({ onResult }: Props) {
       setBusy(false);
     }
   };
+
 
   return (
     <div className="card space-y-2">
@@ -62,7 +70,7 @@ export default function SurveyImport({ onResult }: Props) {
         />
       </label>
       <input className="field" placeholder="補足（例: 西側が4m公道、面積79.43㎡）" value={hint} onChange={(e) => setHint(e.target.value)} />
-      {busy && <div className="text-xs text-brand-700">読み取り中… 20〜40秒かかります</div>}
+      {busy && <div className="text-xs text-brand-700">読み取り中… 1枚で20〜40秒、2枚だと1〜2分かかります</div>}
       {msg && <div className={`text-xs ${msg.startsWith("エラー") ? "text-red-600" : "text-emerald-700"}`}>{msg}</div>}
       {coords && (
         <details className="text-xs" open>

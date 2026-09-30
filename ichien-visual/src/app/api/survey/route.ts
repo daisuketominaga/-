@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSurvey } from "@/lib/surveyRead";
 
-export const maxDuration = 60;
+// 測量図＋販売図面の2枚読みは 60 秒を超えることがあるので長めに（Vercel の上限内）
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as { image?: string; images?: string[]; hint?: string };
