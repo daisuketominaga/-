@@ -1,0 +1,17 @@
+import { chromium } from "playwright";
+const [base = "http://localhost:3143", out = "/tmp/shots"] = process.argv.slice(2);
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
+page.on("dialog", (d) => d.accept());
+await page.goto(base, { waitUntil: "networkidle" });
+await page.getByRole("button", { name: "教材4" }).click(); await page.waitForTimeout(400);
+await page.getByRole("button", { name: "建築可能範囲", exact: true }).first().click(); await page.waitForTimeout(600);
+await page.getByRole("button", { name: "マスを足す・消す" }).click(); await page.waitForTimeout(300);
+await page.getByRole("button", { name: "選べるマスを全部塗る" }).click(); await page.waitForTimeout(500);
+const d1 = await page.locator("text=/境界までの距離/").first().innerText();
+await page.getByRole("button", { name: "← 左" }).first().click(); await page.waitForTimeout(500);
+const d2 = await page.locator("text=/境界までの距離/").first().innerText();
+const hint = await page.locator("text=/揃えました|ぴったり/").first().innerText().catch(() => "");
+await page.screenshot({ path: `${out}/align_left.png` });
+console.log(JSON.stringify({ d1, d2, hint }));
+await browser.close();
