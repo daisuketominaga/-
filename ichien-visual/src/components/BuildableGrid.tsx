@@ -164,18 +164,21 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     return [[u0 + e, v0 + e], [u0 + unit - e, v0 + e], [u0 + e, v0 + unit - e], [u0 + unit - e, v0 + unit - e]].every(([u, v]) => pointInPolygon(toWorld(frame, { x: u, y: v }), inner));
   };
   const [cellHint, setCellHint] = useState<string | null>(null);
-  /** マス選びを1マスから始める: 底辺の中央付近で離れ線に入る最初のマスに枠を置く */
+  /** マス選びを離れ線の角から始める:
+   *  底辺（選んだ辺）から離れ分だけ内側の線と、左側の離れ線が交わる角に1マス目を置く。
+   *  以後の 910mm グリッドはこの角を原点に並ぶので、緑のマスをタップしていくだけで範囲が決まる。
+   *  左の境界が斜めで角のマスが入らないときは、右へ1マスずつずらして最初に入る位置にする */
   const startOneCell = () => {
-    const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
-    const uMid = (Math.min(...us) + Math.max(...us)) / 2;
-    const ou = Math.round((uMid - unit / 2) / unit) * unit;
-    for (let j = 0; j * unit < Math.max(...vs); j++) for (let k = 0; k < 40; k++) {
-      const i = k % 2 ? -Math.ceil(k / 2) : Math.ceil(k / 2);
-      if (cellOk(i, j, ou, 0)) {
+    const vs = loc.map((p) => p.y);
+    const ou = leftEdgeU(); // 底辺の1マス目の高さでの左の離れ線の位置
+    const ov = setback; // 底辺の離れ線
+    for (let j = 0; ov + j * unit < Math.max(...vs); j++) for (let i = 0; i < 40; i++) {
+      if (cellOk(i, j, ou, ov)) {
         setProject((p) => {
-          const g = { ...p.grid, u: round(ou + i * unit, 4), v: round(j * unit, 4) };
+          const g = { ...p.grid, u: round(ou + i * unit, 4), v: round(ov + j * unit, 4) };
           return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, unit, unit, p.building), notches: [] } };
         });
+        setCellHint(null);
         return;
       }
     }
@@ -329,9 +332,14 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           </div>
           {mode === "cells" && (
             <div className="space-y-1 rounded bg-emerald-50 p-2 text-[11px] leading-relaxed text-emerald-900">
-              <div>緑のマスが、境界から {Math.round(setback * 1000)}mm の離れ線の内側に丸ごと入る「選べるマス」です。青が今の建物。離れ線の外のマスはクリックしても入りません（自動で {Math.round(setback * 1000)}mm 離れます）。</div>
-              <div className="flex gap-1">
-                <button className="btn-ghost px-2 py-0.5" onClick={startOneCell}>1マスから始める</button>
+              <div className="font-semibold">手順</div>
+              <ol className="list-decimal space-y-0.5 pl-4">
+                <li>上の「底辺にする辺」で、グリッドを直角に合わせたい辺（ふつうは道路側）を選ぶ</li>
+                <li>「離れ線の角から始める」を押す → 底辺と左の境界からそれぞれ {Math.round(setback * 1000)}mm 離れた角に1マス目が置かれ、{Math.round(unit * 1000)}mm のマス目がそこを原点に並びます</li>
+                <li>緑のマス（離れ線の内側に丸ごと入るマス）をタップ／ドラッグして建物に入れる。青が今の建物。もう一度タップで外れます。離れ線の外のマスは入りません</li>
+              </ol>
+              <div className="flex gap-1 pt-1">
+                <button className="btn-primary px-2 py-0.5" onClick={startOneCell}>離れ線の角から始める（1マス）</button>
                 <button className="btn-ghost px-2 py-0.5" onClick={autoStair}>選べるマスを全部入れる</button>
               </div>
               {cellHint && <div className="text-red-700">{cellHint}</div>}

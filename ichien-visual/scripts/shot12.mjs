@@ -9,7 +9,7 @@ await page.getByRole("button", { name: "教材4" }).click(); await page.waitForT
 await page.getByRole("button", { name: "建築可能範囲", exact: true }).first().click(); await page.waitForTimeout(600);
 await page.locator("select").filter({ hasText: "910mm" }).first().selectOption({ label: "910mm（1マス）" });
 await page.getByRole("button", { name: "マスを足す・消す" }).click(); await page.waitForTimeout(300);
-await page.getByRole("button", { name: "1マスから始める" }).click(); await page.waitForTimeout(400);
+await page.getByRole("button", { name: /離れ線の角から始める/ }).click(); await page.waitForTimeout(400);
 const before = await page.locator("text=/建築面積/").first().innerText();
 // 建物の右隣・上隣のマスをクリックして足す
 const poly = page.locator("polygon[data-building='1']");

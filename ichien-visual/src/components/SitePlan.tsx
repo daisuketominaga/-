@@ -132,7 +132,14 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
               ...p,
               site: { ...p.site, ...s },
               // 底辺は道路のうち一番広い辺（両面道路なら県道側など）
-              grid: { baseEdge: [...(s.edges ?? [])].filter((e) => e.road).sort((a, b) => (b.roadWidth ?? 4) - (a.roadWidth ?? 4))[0]?.index ?? 0, u: 0.455, v: 0.455 },
+              grid: {
+                baseEdge:
+                  [...(s.edges ?? [])]
+                    .filter((e) => e.road && s.points && e.index < s.points.length && dist(s.points[e.index], s.points[(e.index + 1) % s.points.length]) >= 1.0) // 0.33m のような短い辺は底辺にしない
+                    .sort((a, b) => (b.roadWidth ?? 4) - (a.roadWidth ?? 4))[0]?.index ?? 0,
+                u: 0.455,
+                v: 0.455,
+              },
             }))
           }
         />
