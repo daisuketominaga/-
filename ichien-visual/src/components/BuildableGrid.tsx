@@ -264,7 +264,9 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   for (let v = 0; v <= maxV; v += unit) vLines.push(round(v, 4));
   for (let v = -unit; v >= minV; v -= unit) vLines.push(round(v, 4));
 
-  const edgeLabel = (i: number) => `P${i + 1}→P${((i + 1) % site.points.length) + 1}${site.edges.find((e) => e.index === i)?.road ? "（道路）" : ""}`;
+  const edgeLen = (i: number) => { const a = site.points[i], b = site.points[(i + 1) % site.points.length]; return Math.hypot(b.x - a.x, b.y - a.y); };
+  const edgeLabel = (i: number) => `P${i + 1}→P${((i + 1) % site.points.length) + 1}　${round(edgeLen(i), 2)}m${site.edges.find((e) => e.index === i)?.road ? "（道路）" : ""}${edgeLen(i) < 1 ? "（短い辺・非推奨）" : ""}`;
+  const baseTooShort = edgeLen(grid.baseEdge) < 1;
   const mm = (m: number | null) => (m === null ? "－" : `${Math.round(m * 1000).toLocaleString()}`);
 
   const Stepper = ({ label, value, onChange, min = unit }: { label: string; value: number; onChange: (v: number) => void; min?: number }) => (
@@ -332,6 +334,11 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
           </div>
           {mode === "cells" && (
             <div className="space-y-1 rounded bg-emerald-50 p-2 text-[11px] leading-relaxed text-emerald-900">
+              {baseTooShort && (
+                <div className="rounded bg-red-50 p-1 text-red-700">
+                  今の底辺「{edgeLabel(grid.baseEdge)}」はごく短い辺なので、建物の向きがその辺に合ってしまい、隣の長い辺（隣地境界）と平行になりません。上の「底辺にする辺」で、平行にしたい長い辺（例: 南側や道路側の辺）を選び直してから「離れ線の角から始める」を押してください。
+                </div>
+              )}
               <div className="font-semibold">手順</div>
               <ol className="list-decimal space-y-0.5 pl-4">
                 <li>上の「底辺にする辺」で、グリッドを直角に合わせたい辺（ふつうは道路側）を選ぶ</li>
