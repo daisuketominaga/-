@@ -114,6 +114,50 @@ function rayToSegment(o: Pt, dir: Pt, a: Pt, b: Pt): number | null {
 }
 
 export type Clearances = { bottom: number | null; top: number | null; left: number | null; right: number | null };
+export type ClearancePt = { d: number; at: Pt };
+export type ClearancesMin = { bottom: ClearancePt | null; top: ClearancePt | null; left: ClearancePt | null; right: ClearancePt | null };
+
+/** 建物の外形（切り欠き後）の輪郭上の点から、外向きに境界線までの最短距離（底辺座標）。
+ *  辺の中点ではなく輪郭を 10cm 刻みで見て、方向ごとに一番近い点とその位置を返す */
+export function clearancesMin(site: Site, g: GridSetting, b: Building): ClearancesMin {
+  site = effectiveSite(site);
+  const f = baseFrame(site, g.baseEdge);
+  const loc = site.points.map((p) => toLocal(f, p));
+  const n = loc.length;
+  const cast = (o: Pt, dir: Pt) => {
+    let best: number | null = null;
+    for (let i = 0; i < n; i++) {
+      const s = rayToSegment(o, dir, loc[i], loc[(i + 1) % n]);
+      if (s !== null && (best === null || s < best)) best = s;
+    }
+    return best;
+  };
+  const poly = footprintPolygon(b);
+  const dirs: { key: keyof ClearancesMin; dir: Pt }[] = [
+    { key: "bottom", dir: { x: 0, y: -1 } }, { key: "top", dir: { x: 0, y: 1 } }, { key: "left", dir: { x: -1, y: 0 } }, { key: "right", dir: { x: 1, y: 0 } },
+  ];
+  const out: ClearancesMin = { bottom: null, top: null, left: null, right: null };
+  const eps = 0.005;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    const len = Math.hypot(c.x - a.x, c.y - a.y);
+    const steps = Math.max(1, Math.ceil(len / 0.1));
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const p = { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t };
+      for (const { key, dir } of dirs) {
+        // その方向に少し出た点が建物の外なら、輪郭がその方向を向いている
+        if (insideFootprint(b, p.x + dir.x * eps, p.y + dir.y * eps)) continue;
+        const o = { x: g.u + p.x, y: g.v + p.y };
+        const s = cast(o, dir);
+        if (s === null) continue;
+        const cur = out[key];
+        if (!cur || s < cur.d) out[key] = { d: s, at: o };
+      }
+    }
+  }
+  return out;
+}
 
 /** 建物の各辺の中点から、外向きに境界線までの距離（底辺座標）。bottom が底辺側 */
 export function clearances(site: Site, g: GridSetting, w: number, d: number): Clearances {

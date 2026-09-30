@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
 import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, pointInPolygon, insideFootprint } from "@/lib/geometry";
-import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape } from "@/lib/grid";
+import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearancesMin, roadBands, cellsToShape } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -57,7 +57,9 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const bArea = footprintArea(building);
   const notches = notchesOf(building);
   const coverage = (bArea / area) * 100;
-  const cl = clearances(site, grid, building.w, building.d);
+  // 境界までの距離は、切り欠き後の外形の輪郭から方向ごとに一番近いところを取る
+  const clm = useMemo(() => clearancesMin(site, grid, building), [site, grid, building]);
+  const cl = { bottom: clm.bottom?.d ?? null, top: clm.top?.d ?? null, left: clm.left?.d ?? null, right: clm.right?.d ?? null };
 
   // 北の向き（画面上、上から時計回り）。敷地図で決めた1つの値から計算
   const northLocalDeg = northScreenDeg(project, "plan");
@@ -197,6 +199,40 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     const ou = round(paint.u + du, 4), ov = round(paint.v + dv, 4);
     setProject((p) => ({ ...p, grid: { ...p.grid, paint: { u: ou, v: ov, unit, cells: [] } } }));
     setCellHint(null);
+  };
+  /** 囲った中を塗りつぶす: 塗ったマスに囲まれて外へ出られない未塗りマスと、両隣（左右または上下）が塗られている1マスの隙間を塗る（離れ線の内側だけ） */
+  const fillEnclosed = () => {
+    if (paint.cells.size === 0) { setCellHint("先にいくつかマスを塗ってから押してください。"); return; }
+    const cells = new Set(paint.cells);
+    const idx = Array.from(cells).map((k) => k.split(",").map(Number));
+    const i0 = Math.min(...idx.map((c) => c[0])) - 1, i1 = Math.max(...idx.map((c) => c[0])) + 1;
+    const j0 = Math.min(...idx.map((c) => c[1])) - 1, j1 = Math.max(...idx.map((c) => c[1])) + 1;
+    // 外側（枠の1つ外）から到達できる未塗りマスに印を付ける
+    const outside = new Set<string>();
+    const stack: [number, number][] = [[i0, j0]];
+    while (stack.length) {
+      const [i, j] = stack.pop()!;
+      const k = `${i},${j}`;
+      if (i < i0 || i > i1 || j < j0 || j > j1 || outside.has(k) || cells.has(k)) continue;
+      outside.add(k);
+      stack.push([i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]);
+    }
+    let added = 0, skipped = 0;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const k = `${i},${j}`;
+      if (cells.has(k) || outside.has(k)) continue;
+      if (cellOk(i, j, paint.u, paint.v)) { cells.add(k); added++; } else skipped++;
+    }
+    // 1マスの隙間（左右または上下が塗られている）も埋める
+    for (let pass = 0; pass < 2; pass++) for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const k = `${i},${j}`;
+      if (cells.has(k)) continue;
+      const lr = cells.has(`${i - 1},${j}`) && cells.has(`${i + 1},${j}`);
+      const ud = cells.has(`${i},${j - 1}`) && cells.has(`${i},${j + 1}`);
+      if ((lr || ud) && cellOk(i, j, paint.u, paint.v)) { cells.add(k); added++; }
+    }
+    applyCells(cells, paint.u, paint.v);
+    setCellHint(added || skipped ? `${added} マスを塗りつぶしました。${skipped ? `${skipped} マスは離れ線の外なので塗っていません。` : ""}` : "塗りつぶす隙間はありませんでした。");
   };
   const paintAll = () => {
     // 離れ線の内側に丸ごと入るマスを全部塗る
@@ -362,7 +398,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
                   今の底辺「{edgeLabel(grid.baseEdge)}」はごく短い辺なので、建物の向きがその辺に合ってしまい、隣の長い辺（隣地境界）と平行になりません。上の「底辺にする辺」で、平行にしたい長い辺（例: 南側や道路側の辺）を選び直してから「離れ線の角から始める」を押してください。
                 </div>
               )}
-              <div className="font-semibold">使い方：緑のマスをタップすると青（建築可能範囲）になります。もう一度タップで外れます。</div>
+              <div className="font-semibold">使い方：緑のマスをタップすると青（建築可能範囲）になります。もう一度タップで外れます。外周だけ塗って「囲った中を塗りつぶす」を押すと、中がまとめて青になります。</div>
               <div>
                 マス目の原点は、底辺から {Math.round(setback * 1000)}mm・左の境界から {Math.round(setback * 1000)}mm の「離れ線の角」に自動で置いています。原点をずらしたいときは下のボタンで半マスずつ動かせます（塗ったマスは消えます）。
               </div>
@@ -374,6 +410,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
                 <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, -HALF)}>原点 ↓半マス</button>
               </div>
               <div className="flex flex-wrap gap-1 pt-1">
+                <button className="btn-primary px-2 py-0.5" onClick={fillEnclosed}>囲った中を塗りつぶす</button>
                 <button className="btn-ghost px-2 py-0.5" onClick={paintAll}>選べるマスを全部塗る</button>
                 <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, 0)}>全部消す</button>
               </div>
@@ -513,10 +550,10 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
               {building.w.toFixed(2)}m × {building.d.toFixed(2)}m{notches.length ? "（切り欠き後）" : " ＝"} {round(bArea, 2)}m²
             </text>
             {/* 境界までの寸法 */}
-            {cl.bottom !== null && <Dim a={{ x: bu + bw * 0.25, y: bv }} b={{ x: bu + bw * 0.25, y: bv - cl.bottom }} label={mm(cl.bottom)} side="v" />}
-            {cl.top !== null && <Dim a={{ x: bu + bw * 0.75, y: bv + bd }} b={{ x: bu + bw * 0.75, y: bv + bd + cl.top }} label={mm(cl.top)} side="v" />}
-            {cl.left !== null && <Dim a={{ x: bu, y: bv + bd * 0.75 }} b={{ x: bu - cl.left, y: bv + bd * 0.75 }} label={mm(cl.left)} side="h" />}
-            {cl.right !== null && <Dim a={{ x: bu + bw, y: bv + bd * 0.25 }} b={{ x: bu + bw + cl.right, y: bv + bd * 0.25 }} label={mm(cl.right)} side="h" />}
+            {clm.bottom && <Dim a={clm.bottom.at} b={{ x: clm.bottom.at.x, y: clm.bottom.at.y - clm.bottom.d }} label={mm(clm.bottom.d)} side="v" />}
+            {clm.top && <Dim a={clm.top.at} b={{ x: clm.top.at.x, y: clm.top.at.y + clm.top.d }} label={mm(clm.top.d)} side="v" />}
+            {clm.left && <Dim a={clm.left.at} b={{ x: clm.left.at.x - clm.left.d, y: clm.left.at.y }} label={mm(clm.left.d)} side="h" />}
+            {clm.right && <Dim a={clm.right.at} b={{ x: clm.right.at.x + clm.right.d, y: clm.right.at.y }} label={mm(clm.right.d)} side="h" />}
             {/* 境界点番号 */}
             {loc.map((p, i) => (
               <g key={i}>
