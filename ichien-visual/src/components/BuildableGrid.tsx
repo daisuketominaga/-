@@ -89,8 +89,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
 
   /** 階段状の最大範囲: 底辺を離れ線に揃え、入るマスを全部拾う */
   /** 離れ線の左端（底辺の1マス目の高さでの u）。ここにマスの境界を合わせると、左も離れ線ぴったりになる */
-  const leftEdgeU = () => {
-    const v = setback + unit / 2;
+  const leftEdgeU = (vAt?: number) => {
+    const v = vAt ?? setback + unit / 2;
     let best = Infinity;
     for (let i = 0; i < innerLoc.length; i++) {
       const a = innerLoc[i], c = innerLoc[(i + 1) % innerLoc.length];
@@ -258,6 +258,34 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paint, inner, unit]);
+  /** 今の建物の行（奥行の位置）はそのままに、左右を離れ線いっぱいまで広げる。
+   *  左は離れ線にマスの境界を合わせるので左の離れがぴったり（600mm など）になり、右は境界なりの階段になる */
+  const widenSideways = () => {
+    const rows = Math.max(1, Math.round(building.d / unit));
+    const ov = grid.v;
+    // 左端は、建物の高さ範囲の中で離れ線が一番内側に来るところに合わせる（境界が少し斜めでも、一番近い点がぴったりになる）
+    let ou = -Infinity;
+    for (let v = ov + 0.002; v <= ov + rows * unit - 0.002 + 1e-9; v += 0.02) ou = Math.max(ou, leftEdgeU(v));
+    ou = Math.ceil(ou * 1000) / 1000; // 1mm 単位で内側へ丸める
+    const us = loc.map((p) => p.x);
+    const i0 = Math.floor((Math.min(...us) - ou) / unit) - 1, i1 = Math.ceil((Math.max(...us) - ou) / unit) + 1;
+    const cu = grid.u + building.w / 2; // 建物の中心の列を含むひと続きを採る
+    const cells = new Set<string>();
+    for (let j = 0; j < rows; j++) {
+      const ok: number[] = [];
+      for (let i = i0; i <= i1; i++) if (cellOk(i, j, ou, ov)) ok.push(i);
+      if (!ok.length) continue;
+      // ひと続きの区間に分ける
+      const runs: number[][] = [];
+      for (const i of ok) { const r = runs[runs.length - 1]; if (r && r[r.length - 1] === i - 1) r.push(i); else runs.push([i]); }
+      const ci = Math.floor((cu - ou) / unit);
+      const pick = runs.find((r) => r[0] <= ci && ci <= r[r.length - 1]) ?? runs.reduce((a, b) => (b.length > a.length ? b : a));
+      for (const i of pick) cells.add(`${i},${j}`);
+    }
+    if (!cells.size) { setCellHint("この奥行の位置では、離れ線の内側にマスが入りません。"); return; }
+    applyCells(cells, ou, ov);
+    setCellHint(`左右を離れ線（${Math.round(setback * 1000)}mm）いっぱいまで広げました。左はぴったり、右は境界なりの階段（${Math.round(unit * 1000)}mm 刻み）です。奥・底辺側の位置は変えていません。`);
+  };
   const paintAll = () => {
     // 離れ線の内側に丸ごと入るマスを全部塗る
     const cells = new Set<string>();
@@ -468,6 +496,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             </div>
             {cellHint && mode === "move" && <div className="mt-1 text-red-700">{cellHint}</div>}
           </div>
+          <button className="btn-primary w-full justify-center" onClick={widenSideways}>左右を離れ線（{Math.round(setback * 1000)}mm）いっぱいまで広げる（奥行の位置はそのまま）</button>
+          <div className="text-[11px] text-slate-500">今の建物の行はそのままに、左は離れ線ぴったり、右は境界なりの階段に広げます。奥や底辺側も寄せたいときは上の「↑ 奥」「↓ 底辺側」を押してください。</div>
           <button className="btn-primary w-full justify-center" onClick={autoStair}>離れ線の内側で最大の範囲にする（底辺に揃えて階段状）</button>
           <button className="btn-ghost w-full justify-center" onClick={() => { setNotches([]); autoMax(); }}>矩形で最大にする（切り欠きなし）</button>
           <p className="text-[11px] leading-relaxed text-slate-500">「最大の範囲」は、底辺（選んだ辺）から離れ {Math.round(setback * 1000)}mm の線に建物の底辺をぴったり揃え、残りの辺は敷地なりに455mm刻みで削った形です。限界まで建てたときの建築面積の目安になります。離れの数値は敷地図の「離れ」で変えられます（壁の芯までの距離として扱います）。</p>
