@@ -114,7 +114,7 @@ function rayToSegment(o: Pt, dir: Pt, a: Pt, b: Pt): number | null {
 }
 
 export type Clearances = { bottom: number | null; top: number | null; left: number | null; right: number | null };
-export type ClearancePt = { d: number; at: Pt };
+export type ClearancePt = { d: number; at: Pt; to: Pt };
 export type ClearancesMin = { bottom: ClearancePt | null; top: ClearancePt | null; left: ClearancePt | null; right: ClearancePt | null };
 
 /** 建物の外形（切り欠き後）の輪郭上の点から、外向きに境界線までの最短距離（底辺座標）。
@@ -124,13 +124,13 @@ export function clearancesMin(site: Site, g: GridSetting, b: Building): Clearanc
   const f = baseFrame(site, g.baseEdge);
   const loc = site.points.map((p) => toLocal(f, p));
   const n = loc.length;
-  const cast = (o: Pt, dir: Pt) => {
-    let best: number | null = null;
-    for (let i = 0; i < n; i++) {
-      const s = rayToSegment(o, dir, loc[i], loc[(i + 1) % n]);
-      if (s !== null && (best === null || s < best)) best = s;
-    }
-    return best;
+  /** 点 o から線分 a-b への最短距離と、その最寄り点 */
+  const nearest = (o: Pt, a: Pt, c: Pt) => {
+    const ex = c.x - a.x, ey = c.y - a.y;
+    const L2 = ex * ex + ey * ey || 1;
+    const t = Math.max(0, Math.min(1, ((o.x - a.x) * ex + (o.y - a.y) * ey) / L2));
+    const q = { x: a.x + ex * t, y: a.y + ey * t };
+    return { d: Math.hypot(q.x - o.x, q.y - o.y), q };
   };
   const poly = footprintPolygon(b);
   const dirs: { key: keyof ClearancesMin; dir: Pt }[] = [
@@ -145,14 +145,20 @@ export function clearancesMin(site: Site, g: GridSetting, b: Building): Clearanc
     for (let k = 0; k <= steps; k++) {
       const t = k / steps;
       const p = { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t };
-      for (const { key, dir } of dirs) {
-        // その方向に少し出た点が建物の外なら、輪郭がその方向を向いている
+      const o = { x: g.u + p.x, y: g.v + p.y };
+      // 境界の各辺への最短距離（直角に測る）。最寄り点の向きで「底辺側／奥／左／右」に振り分ける。
+      // 輪郭がその向きを向いている（少し出た点が建物の外）ときだけ数える
+      for (let e = 0; e < n; e++) {
+        const { d, q } = nearest(o, loc[e], loc[(e + 1) % n]);
+        if (d < 1e-6) continue;
+        const dx = q.x - o.x, dy = q.y - o.y;
+        const key: keyof ClearancesMin = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "top" : "bottom";
+        const dir = dirs.find((x) => x.key === key)!.dir;
         if (insideFootprint(b, p.x + dir.x * eps, p.y + dir.y * eps)) continue;
-        const o = { x: g.u + p.x, y: g.v + p.y };
-        const s = cast(o, dir);
-        if (s === null) continue;
+        // 最寄り点の向きに少し出た点も建物の外であること（斜めの境界に対して、その角が本当にその境界を向いている）
+        if (insideFootprint(b, p.x + (dx / d) * eps, p.y + (dy / d) * eps)) continue;
         const cur = out[key];
-        if (!cur || s < cur.d) out[key] = { d: s, at: o };
+        if (!cur || d < cur.d) out[key] = { d, at: o, to: q };
       }
     }
   }

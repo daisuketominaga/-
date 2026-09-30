@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import type { Notch, Project, Pt } from "@/lib/types";
+import type { GridSetting, Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
 import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, setbackEdges, setbackStripArea, pointInPolygon, insideFootprint } from "@/lib/geometry";
 import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearancesMin, roadBands, cellsToShape } from "@/lib/grid";
@@ -169,7 +169,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const cellKeyAt = (uv: { u: number; v: number }, ou: number, ov: number) => `${Math.floor((uv.u - ou) / unit)},${Math.floor((uv.v - ov) / unit)}`;
   /** マス（列 i・行 j、原点 ou,ov）が離れ線の内側に完全に入るか（4隅を 1mm 内側に寄せて判定） */
   const cellOk = (i: number, j: number, ou: number, ov: number) => {
-    const e = 0.001;
+    const e = 0.0001; // 0.1mm だけ内側に寄せて判定（離れ線ぴったりのマスは入る。599mm のような不足は出ない）
     const u0 = ou + i * unit, v0 = ov + j * unit;
     return [[u0 + e, v0 + e], [u0 + unit - e, v0 + e], [u0 + e, v0 + unit - e], [u0 + unit - e, v0 + unit - e]].every(([u, v]) => pointInPolygon(toWorld(frame, { x: u, y: v }), inner));
   };
@@ -258,33 +258,87 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paint, inner, unit]);
-  /** 今の建物の行（奥行の位置）はそのままに、左右を離れ線いっぱいまで広げる。
-   *  左は離れ線にマスの境界を合わせるので左の離れがぴったり（600mm など）になり、右は境界なりの階段になる */
-  const widenSideways = () => {
+  /** 離れ線（多角形）を u=at の縦線／v=at の横線で切ったときの範囲 [min, max]（底辺座標） */
+  const extentAt = (axis: "u" | "v", at: number): [number, number] | null => {
+    let lo = Infinity, hi = -Infinity;
+    for (let k = 0; k < innerLoc.length; k++) {
+      const a = innerLoc[k], c = innerLoc[(k + 1) % innerLoc.length];
+      const a1 = axis === "v" ? a.y : a.x, c1 = axis === "v" ? c.y : c.x;
+      const a2 = axis === "v" ? a.x : a.y, c2 = axis === "v" ? c.x : c.y;
+      if ((a1 <= at && c1 >= at) || (c1 <= at && a1 >= at)) {
+        if (Math.abs(c1 - a1) < 1e-9) { lo = Math.min(lo, a2, c2); hi = Math.max(hi, a2, c2); continue; }
+        const t = (at - a1) / (c1 - a1);
+        const x = a2 + (c2 - a2) * t;
+        lo = Math.min(lo, x); hi = Math.max(hi, x);
+      }
+    }
+    return Number.isFinite(lo) ? [lo, hi] : null;
+  };
+  /** 範囲 [r0, r1] の中で離れ線が一番内側に来る位置（side: どちら側の境界か）。
+   *  離れ線は直線の辺なので、極値は範囲の両端か、範囲内にある頂点のどれか */
+  const innermost = (side: "left" | "right" | "bottom" | "top", r0: number, r1: number): number | null => {
+    const axis = side === "left" || side === "right" ? "v" : "u";
+    const cands = [r0, r1, ...innerLoc.map((p) => (axis === "v" ? p.y : p.x)).filter((c) => c > r0 && c < r1)];
+    let best: number | null = null;
+    for (const t of cands) {
+      const ex = extentAt(axis, t);
+      if (!ex) continue;
+      const x = side === "left" || side === "bottom" ? ex[0] : ex[1];
+      if (best === null) best = x;
+      else best = side === "left" || side === "bottom" ? Math.max(best, x) : Math.min(best, x);
+    }
+    return best;
+  };
+  const anchor = grid.anchor ?? "SW";
+  const stepFull = grid.stepFull ?? true;
+  const anchorName = (c: NonNullable<GridSetting["anchor"]>) => (c === "SW" ? "左下（底辺側・左）" : c === "NW" ? "左上（奥・左）" : c === "NE" ? "右上（奥・右）" : "右下（底辺側・右）");
+  /** 基点の角を離れ線の角（境界から setback）にぴったり合わせ、そこから離れ線いっぱいまで広げる。
+   *  奥行（行数）は今の建物のまま。左右は基点の側から、境界なりの階段（stepFull なら 910mm 刻み）で伸ばす */
+  const snugFromAnchor = () => {
     const rows = Math.max(1, Math.round(building.d / unit));
-    const ov = grid.v;
-    // 左端は、建物の高さ範囲の中で離れ線が一番内側に来るところに合わせる（境界が少し斜めでも、一番近い点がぴったりになる）
-    let ou = -Infinity;
-    for (let v = ov + 0.002; v <= ov + rows * unit - 0.002 + 1e-9; v += 0.02) ou = Math.max(ou, leftEdgeU(v));
-    ou = Math.ceil(ou * 1000) / 1000; // 1mm 単位で内側へ丸める
-    const us = loc.map((p) => p.x);
-    const i0 = Math.floor((Math.min(...us) - ou) / unit) - 1, i1 = Math.ceil((Math.max(...us) - ou) / unit) + 1;
-    const cu = grid.u + building.w / 2; // 建物の中心の列を含むひと続きを採る
+    const left = anchor === "SW" || anchor === "NW", bottom = anchor === "SW" || anchor === "SE";
+    const B = stepFull && Math.abs(unit - 0.455) < 1e-6 ? 2 : 1; // 階段の刻み（マス数）
+    const bw = B * unit; // 基点の角の1ブロック分
+    // 基点の角のところで、境界（離れ線）にぴったり合わせる。測るのは基点の角の1ブロック分の範囲だけ
+    // （建物の幅全体で測ると、反対側の斜めの境界に引っ張られて基点が 600mm にならない）。範囲は結果に依存するので繰り返す
+    // 出発点は、離れ線の頂点のうち基点の向きに一番寄っている角（左上なら v−u が最大の頂点）
+    const score = (q: Pt) => (left ? -q.x : q.x) + (bottom ? -q.y : q.y);
+    const start = innerLoc.reduce((a, b) => (score(b) > score(a) ? b : a));
+    let u0 = start.x, v0 = start.y; // 基点の角の位置
+    for (let it = 0; it < 4; it++) {
+      const ve = innermost(bottom ? "bottom" : "top", left ? u0 : u0 - bw, left ? u0 + bw : u0);
+      if (ve === null) { setCellHint("この位置では離れ線が見つかりません。建物を敷地の中へ動かしてください。"); return; }
+      v0 = ve;
+      const ue = innermost(left ? "left" : "right", bottom ? v0 : v0 - bw, bottom ? v0 + bw : v0);
+      if (ue === null) { setCellHint("この位置では離れ線が見つかりません。建物を敷地の中へ動かしてください。"); return; }
+      u0 = ue;
+    }
+    // マスの原点: 基点の角がちょうど (ou, ov) / (ou + K·unit, ov) / (…, ov + rows·unit) に来るように
+    const K = 80; // 右基点のときの列数の上限（十分大きく）
+    const ou = round(left ? u0 : u0 - K * unit, 4);
+    const ov = round(bottom ? v0 : v0 - rows * unit, 4);
     const cells = new Set<string>();
-    for (let j = 0; j < rows; j++) {
-      const ok: number[] = [];
-      for (let i = i0; i <= i1; i++) if (cellOk(i, j, ou, ov)) ok.push(i);
-      if (!ok.length) continue;
-      // ひと続きの区間に分ける
-      const runs: number[][] = [];
-      for (const i of ok) { const r = runs[runs.length - 1]; if (r && r[r.length - 1] === i - 1) r.push(i); else runs.push([i]); }
-      const ci = Math.floor((cu - ou) / unit);
-      const pick = runs.find((r) => r[0] <= ci && ci <= r[r.length - 1]) ?? runs.reduce((a, b) => (b.length > a.length ? b : a));
-      for (const i of pick) cells.add(`${i},${j}`);
+    // 行のブロック: 基点側から並べる
+    const rowBlocks: number[][] = [];
+    if (bottom) { for (let j = 0; j < rows; j += B) rowBlocks.push(Array.from({ length: Math.min(B, rows - j) }, (_, k) => j + k)); }
+    else { for (let j = rows - 1; j >= 0; j -= B) rowBlocks.push(Array.from({ length: Math.min(B, j + 1) }, (_, k) => j - k)); }
+    let stoppedRows = 0;
+    for (const rb of rowBlocks) {
+      // 列のブロック: 基点側から外へ
+      // 基点側の境界が斜めで、その行は基点の列に入らないこともある。その場合は入る列まで内側へずらして始める（基点側も階段になる）
+      let placed = 0;
+      for (let c = 0; c < K; c += B) {
+        const cols = left ? Array.from({ length: B }, (_, k) => c + k) : Array.from({ length: B }, (_, k) => K - 1 - c - k);
+        const ok = cols.every((i) => rb.every((j) => cellOk(i, j, ou, ov)));
+        if (!ok) { if (placed) break; if (c > 12 * B) break; continue; }
+        for (const i of cols) for (const j of rb) cells.add(`${i},${j}`);
+        placed++;
+      }
+      if (!placed) { stoppedRows += rb.length; }
     }
     if (!cells.size) { setCellHint("この奥行の位置では、離れ線の内側にマスが入りません。"); return; }
     applyCells(cells, ou, ov);
-    setCellHint(`左右を離れ線（${Math.round(setback * 1000)}mm）いっぱいまで広げました。左はぴったり、右は境界なりの階段（${Math.round(unit * 1000)}mm 刻み）です。奥・底辺側の位置は変えていません。`);
+    setCellHint(`基点「${anchorName(anchor)}」を離れ線の角（境界から ${Math.round(setback * 1000)}mm）に合わせ、${B === 2 ? "910mm" : `${Math.round(unit * 1000)}mm`} 刻みの階段で離れ線いっぱいまで広げました。${stoppedRows ? `${stoppedRows} 行は入らなかったので減らしています。` : ""}`);
   };
   const paintAll = () => {
     // 離れ線の内側に丸ごと入るマスを全部塗る
@@ -496,8 +550,17 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             </div>
             {cellHint && mode === "move" && <div className="mt-1 text-red-700">{cellHint}</div>}
           </div>
-          <button className="btn-primary w-full justify-center" onClick={widenSideways}>左右を離れ線（{Math.round(setback * 1000)}mm）いっぱいまで広げる（奥行の位置はそのまま）</button>
-          <div className="text-[11px] text-slate-500">今の建物の行はそのままに、左は離れ線ぴったり、右は境界なりの階段に広げます。奥や底辺側も寄せたいときは上の「↑ 奥」「↓ 底辺側」を押してください。</div>
+          <div className="rounded border border-slate-200 p-2">
+            <div className="mb-1 text-xs font-semibold text-slate-700">基点の角（ここを境界から {Math.round(setback * 1000)}mm ぴったりに置く）</div>
+            <div className="grid grid-cols-2 gap-1">
+              {(["NW", "NE", "SW", "SE"] as const).map((c) => (
+                <button key={c} className={`rounded border px-2 py-1 text-xs ${anchor === c ? "border-brand-600 bg-brand-50 font-semibold" : "border-slate-300"}`} onClick={() => setProject((p) => ({ ...p, grid: { ...p.grid, anchor: c } }))}>{anchorName(c)}</button>
+              ))}
+            </div>
+            <label className="mt-2 flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={stepFull} onChange={(e) => setProject((p) => ({ ...p, grid: { ...p.grid, stepFull: e.target.checked } }))} />階段の刻みを 910mm（1マス）にする（455mm の細い壁が残らない）</label>
+            <button className="btn-primary mt-2 w-full justify-center" onClick={snugFromAnchor}>基点を {Math.round(setback * 1000)}mm に合わせて離れ線いっぱいまで広げる（行数はそのまま）</button>
+            <div className="mt-1 text-[11px] text-slate-500">基点の角は境界から {Math.round(setback * 1000)}mm ぴったり、ほかの辺は {Math.round(setback * 1000)}mm 以上を必ず確保して、境界なりの階段に広げます。奥行の行数は今の建物のままで、基点の角に寄せて置き直します。</div>
+          </div>
           <button className="btn-primary w-full justify-center" onClick={autoStair}>離れ線の内側で最大の範囲にする（底辺に揃えて階段状）</button>
           <button className="btn-ghost w-full justify-center" onClick={() => { setNotches([]); autoMax(); }}>矩形で最大にする（切り欠きなし）</button>
           <p className="text-[11px] leading-relaxed text-slate-500">「最大の範囲」は、底辺（選んだ辺）から離れ {Math.round(setback * 1000)}mm の線に建物の底辺をぴったり揃え、残りの辺は敷地なりに455mm刻みで削った形です。限界まで建てたときの建築面積の目安になります。離れの数値は敷地図の「離れ」で変えられます（壁の芯までの距離として扱います）。</p>
@@ -641,10 +704,10 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
               {building.w.toFixed(2)}m × {building.d.toFixed(2)}m{notches.length ? "（切り欠き後）" : " ＝"} {round(bArea, 2)}m²
             </text>
             {/* 境界までの寸法 */}
-            {clm.bottom && <Dim a={clm.bottom.at} b={{ x: clm.bottom.at.x, y: clm.bottom.at.y - clm.bottom.d }} label={mm(clm.bottom.d)} side="v" />}
-            {clm.top && <Dim a={clm.top.at} b={{ x: clm.top.at.x, y: clm.top.at.y + clm.top.d }} label={mm(clm.top.d)} side="v" />}
-            {clm.left && <Dim a={clm.left.at} b={{ x: clm.left.at.x - clm.left.d, y: clm.left.at.y }} label={mm(clm.left.d)} side="h" />}
-            {clm.right && <Dim a={clm.right.at} b={{ x: clm.right.at.x + clm.right.d, y: clm.right.at.y }} label={mm(clm.right.d)} side="h" />}
+            {clm.bottom && <Dim a={clm.bottom.at} b={clm.bottom.to} label={mm(clm.bottom.d)} side="v" />}
+            {clm.top && <Dim a={clm.top.at} b={clm.top.to} label={mm(clm.top.d)} side="v" />}
+            {clm.left && <Dim a={clm.left.at} b={clm.left.to} label={mm(clm.left.d)} side="h" />}
+            {clm.right && <Dim a={clm.right.at} b={clm.right.to} label={mm(clm.right.d)} side="h" />}
             {/* 境界点番号 */}
             {loc.map((p, i) => (
               <g key={i}>

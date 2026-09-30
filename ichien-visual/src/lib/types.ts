@@ -288,6 +288,10 @@ export type GridSetting = {
   unit?: number;
   /** タップで塗ったマス（建築可能範囲）。原点 u,v は底辺座標（離れ線の角）、cells は "列,行"。unit が変わったら作り直す */
   paint?: { u: number; v: number; unit: number; cells: string[]; setback?: number };
+  /** 建物の基点にする角（離れ線の角にぴったり合わせる角）。SW=底辺側・左、NW=奥・左、NE=奥・右、SE=底辺側・右 */
+  anchor?: "SW" | "NW" | "NE" | "SE";
+  /** 階段の刻みを 910mm（1マス）にする（細い壁の残りを防ぐ）。未設定は true */
+  stepFull?: boolean;
 };
 
 export const MODULE = 0.91;
