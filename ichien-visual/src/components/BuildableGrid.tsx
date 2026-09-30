@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, polygonArea, northScreenDeg, footprintArea, notchesOf, footprintPolygon } from "@/lib/geometry";
+import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite } from "@/lib/geometry";
 import { baseFrame, toLocal, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape, shapeToCells } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
@@ -19,7 +19,9 @@ const PX = 44;
 const CORNER_LABEL: Record<Notch["corner"], string> = { SW: "底辺側・左の角", SE: "底辺側・右の角", NE: "奥・右の角", NW: "奥・左の角" };
 
 export default function BuildableGrid({ project, setProject, readOnly }: Props) {
-  const { site, grid, building } = project;
+  const { grid, building } = project;
+  // 道路後退（2項道路のセットバック）を差し引いた有効敷地で考える
+  const site = useMemo(() => effectiveSite(project.site), [project.site]);
   const svgRef = useRef<SVGSVGElement>(null);
   const flip = !!grid.flip;
 
@@ -34,7 +36,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const innerLoc = inner.map((p) => toLocal(frame, p));
 
   // 道路帯（底辺座標）
-  const roadW = Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4));
+  const roadW = Math.min(6, Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4)));
   const roads = roadBands(site, frame, 6);
 
   const allU = [...loc.map((p) => p.x), ...roads.flatMap((r) => r.poly.map((p) => p.x))];
@@ -51,7 +53,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const Y = (v: number) => (flip ? (v - minV) * PX : (maxV - v) * PX);
 
   const fits = footprintFits(frame, inner, grid, building);
-  const area = site.areaOverride ?? polygonArea(site.points);
+  const area = siteAreaOf(project.site);
   const bArea = footprintArea(building);
   const notches = notchesOf(building);
   const coverage = (bArea / area) * 100;

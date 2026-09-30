@@ -15,7 +15,7 @@
  */
 import type { Pt, Site, Building, GridSetting } from "./types";
 import { baseFrame, toLocal, type Frame } from "./grid";
-import { roofRise, buildingSolids, footprintPolygon } from "./geometry";
+import { roofRise, buildingSolids, footprintPolygon, effectiveSite } from "./geometry";
 
 export type SkyPoint = { index: number; u: number; v: number; plan: number; conform: number; ok: boolean };
 export type SkyResult = {
@@ -162,7 +162,8 @@ export type SkyInput = {
  * 座標は「道路の辺を底辺にした座標系」（u: 道路に沿って、v: 敷地の内側へ）。
  */
 export function checkSkyFactor(inp: SkyInput): SkyResult | { error: string } {
-  const { site, grid, building: b, slope, applyDist } = inp;
+  const { grid, building: b, slope, applyDist } = inp;
+  const site = effectiveSite(inp.site);
   const roadEdge = inp.roadEdgeIndex !== undefined ? site.edges.find((e) => e.index === inp.roadEdgeIndex) : site.edges.find((e) => e.road);
   if (!roadEdge) return { error: "道路の辺が設定されていません" };
   const note: string[] = [];
@@ -308,7 +309,8 @@ function evalPoints(conform: Prism[], plan: Prism[], pts: Pt[], nAz: number, nAl
  * 後退緩和（法56条6項・7項の適合建築物の後退）は未対応（適合建築物を小さく見る＝安全側）。
  */
 export function checkSkyFactorBoundary(inp: BoundarySkyInput): SkyResult | { error: string } {
-  const { site, grid, building: b, base, slope } = inp;
+  const { grid, building: b, base, slope } = inp;
+  const site = effectiveSite(inp.site);
   const n = site.points.length;
   const edge = site.edges.find((e) => e.index === inp.edgeIndex);
   const isRoad = !!edge?.road;

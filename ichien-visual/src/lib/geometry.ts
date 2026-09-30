@@ -81,6 +81,80 @@ export function insetPolygon(pts: Pt[], offset: number): Pt[] {
   return out;
 }
 
+/**
+ * 道路後退（セットバック）を差し引いた「有効敷地」。
+ * roadSetback が付いた道路辺を内側へ平行移動し、その帯に入る境界点を移動線との交点へ寄せる。
+ * 点の数と辺番号はそのまま（帯の中に落ちた点は交点に重なり、長さ0の辺になる）ので、
+ * grid.baseEdge や edges[].index はそのまま使える。後退した辺は幅員を「元の幅＋後退×2」（＝原則4m）に直す。
+ */
+export function effectiveSite(site: Site): Site {
+  const n = site.points.length;
+  const targets = site.edges.filter((e) => e.road && (e.roadSetback ?? 0) > 0.001 && e.index < n);
+  if (n < 3 || targets.length === 0) return site;
+  let pts = site.points.map((p) => ({ ...p }));
+  const ccw = signedArea(pts) > 0;
+  for (const e of targets) {
+    const s = e.roadSetback!;
+    const a = pts[e.index];
+    const b = pts[(e.index + 1) % n];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    // 内側向きの法線
+    const nx = ccw ? -dy / len : dy / len;
+    const ny = ccw ? dx / len : -dx / len;
+    const lp = { x: a.x + nx * s, y: a.y + ny * s }; // 後退線上の点
+    const ld = { x: dx, y: dy };
+    const depth = (p: Pt) => (p.x - lp.x) * nx + (p.y - lp.y) * ny; // 負なら道路側（帯の中）
+    const out = pts.map((p) => depth(p) < 1e-9);
+    if (out.every(Boolean)) continue;
+    const next = pts.map((p) => ({ ...p }));
+    const start = out.findIndex((o) => !o); // 敷地側に残る点から一周する（区間が配列の端をまたいでも良いように）
+    let k = 0;
+    while (k < n) {
+      const i = (start + k) % n;
+      if (!out[i]) { k++; continue; }
+      // 帯の中に落ちた点の連続区間
+      let kj = k;
+      while (kj + 1 < n && out[(start + kj + 1) % n]) kj++;
+      const j = (start + kj) % n;
+      const prev = pts[(i - 1 + n) % n];
+      const after = pts[(j + 1) % n];
+      const ia = lineIntersect(prev, { x: pts[i].x - prev.x, y: pts[i].y - prev.y }, lp, ld) ?? pts[i];
+      const ib = lineIntersect(after, { x: pts[j].x - after.x, y: pts[j].y - after.y }, lp, ld) ?? pts[j];
+      for (let q = k; q <= kj; q++) {
+        const idx = (start + q) % n;
+        next[idx] = q === kj ? { x: round(ib.x, 4), y: round(ib.y, 4) } : { x: round(ia.x, 4), y: round(ia.y, 4) };
+      }
+      k = kj + 1;
+    }
+    pts = next;
+  }
+  const edges = site.edges.map((e) => {
+    const t = targets.find((x) => x.index === e.index);
+    const { length: _len, ...rest } = e;
+    void _len;
+    if (!t) return rest;
+    return { ...rest, roadSetback: 0, roadWidth: round((e.roadWidth ?? 4) + 2 * (e.roadSetback ?? 0), 2), roadLabel: `${e.roadLabel ?? "公道"}（後退後）` };
+  });
+  return { ...site, points: pts, edges, areaOverride: undefined, effectiveAreaOverride: undefined };
+}
+
+/** 道路後退で削られる面積 m2（後退がなければ 0） */
+export function setbackStripArea(site: Site) {
+  const eff = effectiveSite(site);
+  if (eff === site) return 0;
+  return Math.max(0, polygonArea(site.points) - polygonArea(eff.points));
+}
+
+/** 建ぺい率・容積率の分母にする敷地面積（道路後退後の有効面積） */
+export function siteAreaOf(site: Site) {
+  if (site.effectiveAreaOverride !== undefined) return site.effectiveAreaOverride;
+  const base = site.areaOverride ?? polygonArea(site.points);
+  return Math.max(0, base - setbackStripArea(site));
+}
+
 /** 点が多角形内にあるか */
 export function pointInPolygon(p: Pt, poly: Pt[]) {
   let inside = false;
@@ -126,6 +200,7 @@ export function buildingCorners(b: Building): Pt[] {
 
 /** 建物の各隅から敷地境界までの最短距離（m）と、離れ不足の隅 */
 export function clearanceReport(site: Site, b: Building) {
+  site = effectiveSite(site);
   const corners = buildingCorners(b);
   const n = site.points.length;
   const results = corners.map((c) => {
@@ -201,6 +276,7 @@ export function faceCompass(b: Building, face: Face, northDeg: number): string {
 
 /** 道路に最も向いている面 */
 export function roadFaceOf(site: Site, b: Building): Face | null {
+  site = effectiveSite(site);
   const e = site.edges.find((x) => x.road);
   if (!e) return null;
   const a = site.points[e.index];

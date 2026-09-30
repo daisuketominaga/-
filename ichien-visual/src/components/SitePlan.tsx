@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Project, Pt, Site, SiteEdge } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { polygonArea, centroid, bbox, insetPolygon, dist, round, northScreenDeg } from "@/lib/geometry";
+import { polygonArea, centroid, bbox, insetPolygon, dist, round, northScreenDeg, effectiveSite, setbackStripArea, siteAreaOf } from "@/lib/geometry";
 import { downloadSvgAsPng } from "@/lib/store";
 import SurveyImport from "./SurveyImport";
 
@@ -27,12 +27,17 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
   // ===== 計算 =====
   const areaCalc = polygonArea(site.points);
   const area = site.areaOverride ?? areaCalc;
-  const setbackPoly = useMemo(() => insetPolygon(site.points, site.setback), [site.points, site.setback]);
+  // 道路後退（2項道路のセットバック）: 後退線と有効面積
+  const eff = useMemo(() => effectiveSite(site), [site]);
+  const strip = useMemo(() => setbackStripArea(site), [site]);
+  const effArea = siteAreaOf(site);
+  const hasSetback = strip > 0.001;
+  const setbackPoly = useMemo(() => insetPolygon(effectiveSite(site).points, site.setback), [site]);
 
   // ===== 描画範囲（道路帯を含めて余白をとる）=====
   const view = useMemo(() => {
     const pts = [...site.points];
-    const roadW = Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4));
+    const roadW = Math.min(6, Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4)));
     const b = bbox(pts);
     const pad = 2.2 + roadW;
     return {
@@ -124,7 +129,8 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
             setProject((p) => ({
               ...p,
               site: { ...p.site, ...s },
-              grid: { baseEdge: (s.edges ?? []).find((e) => e.road)?.index ?? 0, u: 0.455, v: 0.455 },
+              // 底辺は道路のうち一番広い辺（両面道路なら県道側など）
+              grid: { baseEdge: [...(s.edges ?? [])].filter((e) => e.road).sort((a, b) => (b.roadWidth ?? 4) - (a.roadWidth ?? 4))[0]?.index ?? 0, u: 0.455, v: 0.455 },
             }))
           }
         />
@@ -161,7 +167,57 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
               <span className="label">境界からの離れ m</span>
               <input type="number" step="0.1" className="field" value={site.setback} onChange={(e) => setSite((s) => ({ ...s, setback: Number(e.target.value) }))} />
             </div>
+            {(hasSetback || site.effectiveAreaOverride !== undefined) && (
+              <div className="col-span-2">
+                <span className="label">道路後退後の有効面積（販売図面の値）m²</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="field"
+                  value={site.effectiveAreaOverride ?? ""}
+                  placeholder={round(effArea, 2).toString()}
+                  onChange={(e) => setSite((s) => ({ ...s, effectiveAreaOverride: e.target.value === "" ? undefined : Number(e.target.value) }))}
+                />
+                <div className="text-[11px] text-slate-500">空欄なら 面積 − 後退部分（{round(strip, 2)}㎡）で計算。建ぺい率・容積率の分母はこの有効面積です。</div>
+              </div>
+            )}
           </div>
+        </div>
+
+        <div className="card space-y-2">
+          <h3 className="text-sm font-semibold">辺ごとの道路・後退</h3>
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            道路に接する辺にチェック。幅員4m未満の道路（法42条2項）は中心から2mまで下がる必要があるので、後退幅に（4 − 幅員）÷ 2 を入れると図に後退線が出て、有効面積が減ります。両面道路なら2つの辺にチェックします。
+          </p>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-slate-500">
+                <th className="text-left">辺</th><th className="text-right">長さ</th><th>道路</th><th className="text-left">幅員m</th><th className="text-left">後退m</th>
+              </tr>
+            </thead>
+            <tbody>
+              {site.points.map((a, i) => {
+                const b = site.points[(i + 1) % site.points.length];
+                const e = edgeOf(i);
+                const len = e.length ?? dist(a, b);
+                return (
+                  <tr key={"er" + i} className="border-t border-slate-100 align-top">
+                    <td className="py-1 whitespace-nowrap">P{i + 1}→P{((i + 1) % site.points.length) + 1}</td>
+                    <td className="py-1 text-right whitespace-nowrap">{round(len, 2).toFixed(2)}</td>
+                    <td className="py-1 text-center"><input type="checkbox" checked={!!e.road} onChange={(ev) => setEdge(i, ev.target.checked ? { road: true, roadWidth: e.roadWidth ?? 4, roadLabel: e.roadLabel ?? "公道" } : { road: false, roadSetback: undefined })} /></td>
+                    <td className="py-1"><input type="number" step="0.1" className="field w-14 px-1 py-0.5" disabled={!e.road} value={e.roadWidth ?? ""} onChange={(ev) => setEdge(i, { roadWidth: ev.target.value === "" ? undefined : Number(ev.target.value) })} /></td>
+                    <td className="py-1"><input type="number" step="0.01" className="field w-14 px-1 py-0.5" disabled={!e.road} value={e.roadSetback ?? ""} placeholder={e.road && (e.roadWidth ?? 4) < 4 ? round((4 - (e.roadWidth ?? 4)) / 2, 2).toString() : ""} onChange={(ev) => setEdge(i, { roadSetback: ev.target.value === "" ? undefined : Number(ev.target.value) })} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {site.points.map((_, i) => edgeOf(i)).filter((e) => e.road).map((e) => (
+            <div key={"lab" + e.index} className="flex items-center gap-1 text-[11px]">
+              <span className="w-16 shrink-0 text-slate-500">P{e.index + 1}→P{((e.index + 1) % site.points.length) + 1} 種別</span>
+              <input className="field px-1 py-0.5" placeholder="例: 法42条2項 公道 市道A-144号" value={e.roadLabel ?? ""} onChange={(ev) => setEdge(e.index, { roadLabel: ev.target.value })} />
+            </div>
+          ))}
         </div>
 
         <div className="card space-y-2">
@@ -208,6 +264,7 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
         <div className={`flex flex-wrap items-center justify-between gap-2 ${readOnly ? "print-hide" : ""}`}>
           <div className="text-sm text-slate-600">
             <b>{project.name}</b> 敷地図　{round(area, 2)} m²（{round(area / TSUBO_M2, 2)}坪）
+            {hasSetback && <span className="ml-2 text-red-700">道路後退 −{round(strip, 2)} m² → 有効 {round(effArea, 2)} m²（{round(effArea / TSUBO_M2, 2)}坪）</span>}
           </div>
           <div className="flex gap-2">
             <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_敷地図.png`)}>PNG保存</button>
@@ -247,7 +304,8 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
                   const a = site.points[i];
                   const b = site.points[(i + 1) % site.points.length];
                   const n = outwardNormal(i);
-                  const w = e.roadWidth ?? 4;
+                  const wReal = e.roadWidth ?? 4;
+                  const w = Math.min(6, wReal); // 帯の描画幅（広い道路は 6m で省略）
                   // 道路帯は辺の延長線上に長く引く
                   const ext = 30;
                   const dx = (b.x - a.x) / (dist(a, b) || 1);
@@ -258,7 +316,8 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
                   const p2 = toPx(b2);
                   const p3 = toPx({ x: b2.x + n.x * w, y: b2.y + n.y * w });
                   const p4 = toPx({ x: a2.x + n.x * w, y: a2.y + n.y * w });
-                  const mid = toPx({ x: (a.x + b.x) / 2 + n.x * (w / 2), y: (a.y + b.y) / 2 + n.y * (w / 2) });
+                  const lw = Math.max(w, 3.2); // 狭い道路（2項道路など）は文字が帯からはみ出すので、少し外側に書く
+                  const mid = toPx({ x: (a.x + b.x) / 2 + n.x * (lw / 2), y: (a.y + b.y) / 2 + n.y * (lw / 2) });
                   const q1 = toPx({ x: (a.x + b.x) / 2 + n.x * 0.15, y: (a.y + b.y) / 2 + n.y * 0.15 });
                   const q2 = toPx({ x: (a.x + b.x) / 2 + n.x * (w - 0.15), y: (a.y + b.y) / 2 + n.y * (w - 0.15) });
                   const lines = Array.from({ length: 14 }, (_, k) => k);
@@ -281,7 +340,7 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
                         })}
                       </g>
                       <line x1={q1.x} y1={q1.y} x2={q2.x} y2={q2.y} stroke="#333" strokeWidth={1} markerStart="url(#arrowS)" markerEnd="url(#arrowE)" />
-                      <text x={mid.x} y={mid.y - 10} textAnchor="middle" fontSize={15} fontWeight={600} fill="#222">約{w.toFixed(1)}m</text>
+                      <text x={mid.x} y={mid.y - 10} textAnchor="middle" fontSize={15} fontWeight={600} fill="#222">約{wReal.toFixed(1)}m{wReal > w ? "（図は省略）" : ""}</text>
                       <text x={mid.x} y={mid.y + 14} textAnchor="middle" fontSize={13} fill="#333">{(e.roadLabel ?? "公道").split(" ").slice(-1)[0]}</text>
                       {(e.roadLabel ?? "").split(" ").length > 1 && (
                         <text x={mid.x} y={mid.y + 32} textAnchor="middle" fontSize={11} fill="#444" writingMode="tb" style={{ display: "none" }}>{e.roadLabel}</text>
@@ -304,6 +363,39 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
 
               {/* 敷地 */}
               <polygon points={polyPx.map((p) => `${p.x},${p.y}`).join(" ")} fill="#f6ead3" stroke="#1b2430" strokeWidth={3} strokeLinejoin="round" />
+
+              {/* 道路後退（セットバック）部分: 斜線ハッチ＋後退線 */}
+              {hasSetback && (
+                <g>
+                  <defs>
+                    <pattern id="setbackHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <line x1="0" y1="0" x2="0" y2="8" stroke="#b03a2e" strokeWidth="1.2" />
+                    </pattern>
+                  </defs>
+                  <path
+                    d={`M${polyPx.map((p) => `${p.x},${p.y}`).join(" L")} Z M${eff.points.map(toPx).map((p) => `${p.x},${p.y}`).join(" L")} Z`}
+                    fill="url(#setbackHatch)"
+                    fillRule="evenodd"
+                    opacity={0.7}
+                  />
+                  <polygon points={eff.points.map(toPx).map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#b03a2e" strokeWidth={1.5} strokeDasharray="8 4" />
+                  {site.edges
+                    .filter((e) => e.road && (e.roadSetback ?? 0) > 0.001 && e.index < site.points.length)
+                    .map((e) => {
+                      const a = eff.points[e.index];
+                      const b = eff.points[(e.index + 1) % site.points.length];
+                      const n = outwardNormal(e.index);
+                      const m = toPx({ x: (a.x + b.x) / 2 - n.x * 0.9, y: (a.y + b.y) / 2 - n.y * 0.9 });
+                      let ang = (Math.atan2(toPx(b).y - toPx(a).y, toPx(b).x - toPx(a).x) * 180) / Math.PI;
+                      if (ang > 90 || ang < -90) ang += 180;
+                      return (
+                        <text key={"sb" + e.index} x={m.x} y={m.y} textAnchor="middle" fontSize={11} fill="#b03a2e" transform={`rotate(${ang} ${m.x} ${m.y})`}>
+                          道路後退線（後退 {round(e.roadSetback ?? 0, 2)}m・後退部分 約{round(strip, 2)}㎡）
+                        </text>
+                      );
+                    })}
+                </g>
+              )}
 
               {/* 離れ線 */}
               {showSetback && !site.fireproofException && (
@@ -358,12 +450,17 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
 
               {/* 面積 */}
               <text x={cen.x} y={cen.y - 4} textAnchor="middle" fontSize={34} fontWeight={700} fill="#1b2430">
-                {round(area, 2).toFixed(2)}m²
+                {round(hasSetback ? effArea : area, 2).toFixed(2)}m²
               </text>
               <line x1={cen.x - 70} y1={cen.y + 8} x2={cen.x + 70} y2={cen.y + 8} stroke="#1b2430" strokeWidth={1} />
               <text x={cen.x} y={cen.y + 34} textAnchor="middle" fontSize={22} fill="#1b2430">
-                ({round(area / TSUBO_M2, 2).toFixed(2)}坪)
+                ({round((hasSetback ? effArea : area) / TSUBO_M2, 2).toFixed(2)}坪)
               </text>
+              {hasSetback && (
+                <text x={cen.x} y={cen.y + 56} textAnchor="middle" fontSize={13} fill="#555">
+                  有効宅地（後退前 {round(area, 2).toFixed(2)}m²、道路後退 −{round(strip, 2).toFixed(2)}m²）
+                </text>
+              )}
 
               {/* 境界点（ドラッグ可） */}
               {polyPx.map((p, i) => (

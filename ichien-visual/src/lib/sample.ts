@@ -366,3 +366,89 @@ export function lessonProject3(): Project {
   ];
   return p;
 }
+
+
+/**
+ * 教材4: 厚木市旭町4丁目 2004番3（建築条件付売地・イーカム、図面コード 6930914）。両面道路と道路後退の教材。
+ * 出典: 境界点図（有限会社誠心測量、令和6年7月6日、任意座標系、P1〜P5）と 販売図面（土地 80.28㎡＝後退後の有効宅地、第二種住居地域、建ぺい60%・容積200%、準防火地域）。
+ * 座標は境界点図の座標一覧表（X=南北, Y=東西）をそのまま使用（x=Y, y=X で平行移動）。座標からの面積 90.68㎡、西側道路後退 約10.42㎡ → 有効 80.26㎡（販売図面 80.28㎡）。
+ * 道路: 西側 市道A-144号（法42条2項 公道、幅員約1.8m → 中心から2mで後退1.1m）、東側 県道酒井・金田線＝都市計画道路3・3・1平塚相模原線（法42条1項1号、幅員約16m、整備済み）。
+ * 真北は境界点図の方位記号（上が北）と判断【要確認】。建物は販売図面の参考プラン（木造2階建て 92.74㎡）に合わせた外形の目安。
+ */
+export function lessonProject4(): Project {
+  // 境界点図の座標（任意座標系）: P1(91.728, 95.449) P2(91.857, 87.458) P3(91.877, 87.128) P4(101.335, 87.284) P5(101.176, 98.091)
+  const raw: [number, number][] = [
+    [95.449, 91.728], [87.458, 91.857], [87.128, 91.877], [87.284, 101.335], [98.091, 101.176],
+  ];
+  const minX = Math.min(...raw.map((r) => r[0]));
+  const minY = Math.min(...raw.map((r) => r[1]));
+  const points = raw.map(([x, y]) => ({ x: +(x - minX).toFixed(3), y: +(y - minY).toFixed(3) }));
+  const base = sampleProject();
+  const p: Project = {
+    ...base,
+    name: "教材4 厚木市旭町4丁目",
+    address: "神奈川県厚木市旭町4丁目2004番3、13（SB部分）",
+    catchCopy: "駅まで平坦・2面接道",
+    site: {
+      points,
+      edges: [
+        { index: 0, length: 7.99, note: "南側 隣地1996-1" },
+        { index: 1, length: 0.33 },
+        { index: 2, length: 9.45, road: true, roadWidth: 1.8, roadSetback: 1.1, roadLabel: "法42条2項 公道 市道A-144号" },
+        { index: 3, length: 10.8 },
+        { index: 4, length: 9.81, road: true, roadWidth: 16.0, roadLabel: "法42条1項1号 県道酒井・金田線（都計道3・3・1平塚相模原線）" },
+      ],
+      northDeg: 0,
+      areaOverride: undefined,
+      effectiveAreaOverride: 80.28,
+      coverageRatio: 60,
+      farRatio: 200,
+      setback: 0.5,
+      fireproofException: false,
+      roadLevelDiff: 0,
+      cornerLot: false,
+      heightRules: {
+        zoneId: "2res",
+        roadSlope: 1.25,
+        roadApplyDist: 25,
+        northEnabled: false,
+        northBase: 10,
+        northSlope: 1.25,
+        neighborEnabled: true,
+        neighborBase: 20,
+        neighborSlope: 1.25,
+        kodoEnabled: false,
+        kodoPresetId: "",
+        kodoSegs: [],
+        kodoAbsolute: 0,
+        absoluteMax: 0,
+        skyEnabled: true,
+      },
+    },
+    grid: { baseEdge: 4, u: 0.91, v: 0.91 },
+    building: {
+      ...base.building,
+      w: 6.37,
+      d: 7.28,
+      floors: 2,
+      floorHeights: [2.4, 2.4],
+      foundation: 0.5,
+      roof: "shed",
+      roofHighSide: "N",
+      roofPitchSun: 1.5,
+      eaveOverhang: 0.3,
+      roofDrop: {},
+      structureLabel: "木造2階建て",
+      wallLabel: "ガルバリウム鋼板 縦張り",
+      accentLabel: "片流れ屋根",
+    },
+    floors: [
+      { level: 1, rooms: [], fixtures: [] },
+      { level: 2, rooms: [], fixtures: [] },
+    ],
+    openings: [],
+    updatedAt: new Date().toISOString(),
+  };
+  p.building = buildingFromGrid(p.site, p.grid, p.building.w, p.building.d, p.building);
+  return p;
+}

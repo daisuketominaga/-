@@ -5,7 +5,7 @@ import type { Project } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
 import type { ProjectMeta } from "@/lib/store";
 import { readProject } from "@/lib/store";
-import { footprintArea, polygonArea, round } from "@/lib/geometry";
+import { footprintArea, siteAreaOf, round } from "@/lib/geometry";
 import { levels, checkLimits3D, rulesOf } from "@/lib/heightLimits";
 import { estimateCost, totalFloorArea } from "@/lib/cost";
 import CostPanel from "./CostPanel";
@@ -20,7 +20,7 @@ export default function Compare({ project, setProject, list, currentId }: Props)
     return picked.map(({ id, p }) => {
       const b = p.building;
       const lv = levels(b);
-      const siteArea = p.site.areaOverride ?? polygonArea(p.site.points);
+      const siteArea = siteAreaOf(p.site);
       const fp = footprintArea(b);
       const total = totalFloorArea(p);
       const lims = checkLimits3D(p);

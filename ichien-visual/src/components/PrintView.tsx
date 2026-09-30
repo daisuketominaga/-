@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import type { Project } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { round, roadFaceOf, footprintArea, floorAreaOf } from "@/lib/geometry";
+import { round, roadFaceOf, footprintArea, floorAreaOf, siteAreaOf } from "@/lib/geometry";
 import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
 import { AllFloorsSvg } from "./FloorPlan";
@@ -33,7 +33,7 @@ export default function PrintView({ project, setProject }: Props) {
   const hasLdk = project.floors.flatMap((f) => f.rooms).some((r) => r.type === "ldk");
   const extras = Array.from(new Set(project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "study" || r.type === "garage").map((r) => r.name)));
   const summary = `${bedrooms}${hasLdk ? "LDK" : "K"}${extras.length ? "＋" + extras.join("＋") : ""}`;
-  const siteArea = project.site.areaOverride ?? 0;
+  const siteArea = siteAreaOf(project.site);
   const sky = useSky(project);
   const shadow = useShadow(project);
   const bsky = useBoundarySky(project);

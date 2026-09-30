@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, forwardRef } from "react";
 import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, TurnSide, Fixture, FixtureKind } from "@/lib/types";
 import { roomGroups, groupOutline, mergeWithNeighbors, touchLength } from "@/lib/roomGroups";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
-import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf, floorAreaOf } from "@/lib/geometry";
+import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf, floorAreaOf, siteAreaOf } from "@/lib/geometry";
 import { downloadSvgAsPng, uid } from "@/lib/store";
 import { siteInBuildingFrame, clearances, type SiteContext } from "@/lib/grid";
 import FixtureSchedule from "./FixtureSchedule";
@@ -235,7 +235,7 @@ export default function FloorPlan({ project, setProject }: Props) {
   const floorArea = (f: Floor) => floorAreaOf(building, f.rooms);
   const balconyArea = (f: Floor) => f.rooms.filter((r) => r.type === "balcony").reduce((a, r) => a + r.w * r.d, 0);
   const total = project.floors.reduce((a, f) => a + floorArea(f), 0);
-  const siteArea = project.site.areaOverride ?? 0;
+  const siteArea = siteAreaOf(project.site);
 
   const summary = useMemo(() => {
     const bedrooms = project.floors.flatMap((f) => f.rooms).filter((r) => r.type === "bedroom" || r.type === "japanese").length;
@@ -1266,7 +1266,7 @@ export const AllFloorsSvg = forwardRef<SVGSVGElement, { project: Project; summar
     const rows = Math.ceil((project.floors.length + 1) / cols);
     const W = cols * cellW + 40;
     const H = rows * cellH + 80;
-    const siteArea = project.site.areaOverride ?? 0;
+    const siteArea = siteAreaOf(project.site);
     return (
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif" }}>
         <rect width={W} height={H} fill="#fff" />

@@ -9,21 +9,28 @@ type Props = { onResult: (s: Partial<Site>) => void };
 export default function SurveyImport({ onResult }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string[]>([]);
   const [hint, setHint] = useState("");
   const [coords, setCoords] = useState<{ label: string; X: number; Y: number }[] | null>(null);
 
-  const handle = async (file: File) => {
+  const handle = async (files: File[]) => {
     setBusy(true);
     setMsg(null);
     try {
-      let dataUrl = file.type === "application/pdf" ? await pdfToDataUrl(file) : await fileToDataUrl(file);
-      dataUrl = await shrink(dataUrl);
-      setPreview(dataUrl);
+      // 1枚目が測量図、2枚目以降は販売図面・区画図（道路・後退・面積の補足）。ファイル名に「販売」「図面」「区画」があれば後ろへ回す
+      const score = (f: File) => (/販売|区画|チラシ|マイソク|図面/.test(f.name) ? 1 : 0);
+      const ordered = [...files].sort((a, b) => score(a) - score(b)).slice(0, 4);
+      const urls: string[] = [];
+      for (const f of ordered) {
+        let dataUrl = f.type === "application/pdf" ? await pdfToDataUrl(f) : await fileToDataUrl(f);
+        dataUrl = await shrink(dataUrl);
+        urls.push(dataUrl);
+      }
+      setPreview(urls);
       const res = await fetch("/api/survey", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: dataUrl, hint }),
+        body: JSON.stringify({ images: urls, hint }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "読み取りに失敗しました");
@@ -44,12 +51,14 @@ export default function SurveyImport({ onResult }: Props) {
         <span className="text-xl">📐</span>
         <span className="mt-1 font-medium text-slate-700">測量図・地積測量図・公図（画像 / PDF）</span>
         <span>AIが境界点・辺長・道路・方位を読み取ります</span>
+        <span className="mt-1 text-[11px] text-brand-700">販売図面（区画図）も一緒に選ぶと、両面道路・幅員・道路後退・有効面積を補って読みます（複数選択OK）</span>
         <input
           type="file"
           accept="image/*,application/pdf"
           className="hidden"
+          multiple
           disabled={busy}
-          onChange={(e) => e.target.files?.[0] && handle(e.target.files[0])}
+          onChange={(e) => e.target.files?.length && handle(Array.from(e.target.files))}
         />
       </label>
       <input className="field" placeholder="補足（例: 西側が4m公道、面積79.43㎡）" value={hint} onChange={(e) => setHint(e.target.value)} />
@@ -74,10 +83,10 @@ export default function SurveyImport({ onResult }: Props) {
           </table>
         </details>
       )}
-      {preview && (
+      {preview.length > 0 && (
         <details className="text-xs">
-          <summary className="cursor-pointer text-slate-500">送った画像を見る</summary>
-          <img src={preview} alt="測量図" className="mt-1 w-full rounded border" />
+          <summary className="cursor-pointer text-slate-500">送った画像を見る（{preview.length}枚）</summary>
+          {preview.map((u, i) => <img key={i} src={u} alt={i === 0 ? "測量図" : "販売図面"} className="mt-1 w-full rounded border" />)}
         </details>
       )}
       <p className="text-[11px] leading-relaxed text-slate-500">

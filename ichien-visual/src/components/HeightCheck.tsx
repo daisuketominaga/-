@@ -10,7 +10,7 @@ import { ZONE_PRESETS as ZP } from "@/lib/heightPresets";
 import { checkShadow, type ShadowResult } from "@/lib/shadow";
 import KodoImport from "./KodoImport";
 import ZoningImport from "./ZoningImport";
-import { polygonArea, round, footprintArea, footprintWorld } from "@/lib/geometry";
+import { round, footprintArea, footprintWorld, siteAreaOf, effectiveSite } from "@/lib/geometry";
 
 type Props = {
   project: Project;
@@ -38,7 +38,7 @@ export function verdictRows(project: Project, skyAll: SkyAll | null, shadow: Sha
   rows.push({ item: "用途地域", status: zone ? "ok" : "unknown", detail: zone ? `${zone.name}（道路斜線 ${r.roadSlope}、適用距離 ${r.roadApplyDist}m）` : "未選択。選ぶと勾配・適用距離・北側斜線・隣地斜線が自動で入ります" });
 
   // 建ぺい率・容積率
-  const siteArea = project.site.areaOverride ?? polygonArea(project.site.points);
+  const siteArea = siteAreaOf(project.site);
   const bArea = footprintArea(b);
   const cov = (bArea / siteArea) * 100;
   const covLimit = project.site.coverageRatio + (project.site.cornerLot ? 10 : 0);
@@ -139,7 +139,7 @@ export function useBoundarySky(project: Project): BoundarySkyAll | null {
     if (!r.skyEnabled) return null;
     const lims = checkLimits3D(project);
     const lv = levels(project.building);
-    const site = project.site;
+    const site = effectiveSite(project.site);
     const out: BoundarySkyAll = [];
     const nb = lims.find((l) => l.key === "neighbor");
     if (r.neighborEnabled && nb && nb.over > 0) {

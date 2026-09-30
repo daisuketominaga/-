@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Project } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
-import { footprintArea, polygonArea, round } from "@/lib/geometry";
+import { footprintArea, siteAreaOf, round } from "@/lib/geometry";
 import { levels, rulesOf } from "@/lib/heightLimits";
 import { ZONE_PRESETS, KODO_PRESETS } from "@/lib/heightPresets";
 import { totalFloorArea } from "@/lib/cost";
@@ -24,7 +24,7 @@ export function proposalFacts(project: Project): string {
   const r = rulesOf(project);
   const zone = ZONE_PRESETS.find((z) => z.id === r.zoneId)?.name;
   const kodo = KODO_PRESETS.find((k) => k.id === r.kodoPresetId)?.name ?? r.kodoNote;
-  const siteArea = project.site.areaOverride ?? polygonArea(project.site.points);
+  const siteArea = siteAreaOf(project.site);
   const total = totalFloorArea(project);
   const roads = project.site.edges.filter((e) => e.road).map((e) => `${e.roadLabel ?? "道路"} 幅員${e.roadWidth ?? "?"}m`);
   const rooms = project.floors.map((f) => `${f.level}階: ${f.rooms.map((x) => x.name).join("・")}`);
@@ -68,7 +68,7 @@ export default function ProposalCover({ project, setProject }: Props) {
   };
   const today = new Date();
   const dateStr = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`;
-  const siteArea = project.site.areaOverride ?? polygonArea(project.site.points);
+  const siteArea = siteAreaOf(project.site);
   const total = totalFloorArea(project);
   const cover = project.photos?.find((p) => p.kind === "exterior") ?? project.photos?.[0];
 

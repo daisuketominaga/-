@@ -1,6 +1,6 @@
 import type { Pt, Site, GridSetting, Building } from "./types";
 import { HALF, MODULE } from "./types";
-import { pointInPolygon, insetPolygon, round, dist, footprintPolygon, insideFootprint } from "./geometry";
+import { pointInPolygon, insetPolygon, round, dist, footprintPolygon, insideFootprint, effectiveSite } from "./geometry";
 import type { Notch } from "./types";
 
 /** 底辺の枠組み: 始点 a、辺に沿った単位ベクトル t、内側向きの単位法線 n */
@@ -8,6 +8,7 @@ export type Frame = { a: Pt; t: Pt; n: Pt; len: number; reversed: boolean };
 
 /** 選んだ辺を底辺として、内側が「上」になる座標系を作る */
 export function baseFrame(site: Site, edgeIndex: number): Frame {
+  site = effectiveSite(site);
   const n = site.points.length;
   const i = ((edgeIndex % n) + n) % n;
   let a = site.points[i];
@@ -48,6 +49,7 @@ export const snapHalf = (v: number) => round(Math.round(v / HALF) * HALF, 3);
 
 /** 底辺基準の位置と大きさから、世界座標の建物（x, y, rotDeg）を作る */
 export function buildingFromGrid(site: Site, g: GridSetting, w: number, d: number, prev: Building): Building {
+  site = effectiveSite(site);
   const f = baseFrame(site, g.baseEdge);
   const origin = toWorld(f, { x: g.u, y: g.v });
   const rotDeg = (Math.atan2(f.t.y, f.t.x) * 180) / Math.PI;
@@ -71,6 +73,7 @@ export function rectFits(f: Frame, inner: Pt[], u: number, v: number, w: number,
 
 /** 離れ線の内側に入る、455mm刻みで最大の矩形を探す */
 export function maxRect(site: Site, edgeIndex: number, setback: number) {
+  site = effectiveSite(site);
   const f = baseFrame(site, edgeIndex);
   const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
   const loc = site.points.map((p) => toLocal(f, p));
@@ -114,6 +117,7 @@ export type Clearances = { bottom: number | null; top: number | null; left: numb
 
 /** 建物の各辺の中点から、外向きに境界線までの距離（底辺座標）。bottom が底辺側 */
 export function clearances(site: Site, g: GridSetting, w: number, d: number): Clearances {
+  site = effectiveSite(site);
   const f = baseFrame(site, g.baseEdge);
   const loc = site.points.map((p) => toLocal(f, p));
   const n = loc.length;
@@ -140,6 +144,7 @@ export type RoadBand = { poly: Pt[]; mid: Pt; w: number; label: string };
 
 /** 道路帯（底辺座標）。辺の外側へ幅員ぶん広げた帯 */
 export function roadBands(site: Site, f: Frame, ext = 6): RoadBand[] {
+  site = effectiveSite(site);
   const cx = site.points.reduce((s, p) => s + p.x, 0) / site.points.length;
   const cy = site.points.reduce((s, p) => s + p.y, 0) / site.points.length;
   return site.edges
@@ -147,7 +152,7 @@ export function roadBands(site: Site, f: Frame, ext = 6): RoadBand[] {
     .map((e) => {
       const a = site.points[e.index];
       const b = site.points[(e.index + 1) % site.points.length];
-      const w = e.roadWidth ?? 4;
+      const w = Math.min(6, e.roadWidth ?? 4); // 図に描く帯は最大 6m（広い道路でも図が小さくならないように）
       const dx = (b.x - a.x) / (dist(a, b) || 1);
       const dy = (b.y - a.y) / (dist(a, b) || 1);
       let nx = dy, ny = -dx;
@@ -160,7 +165,7 @@ export function roadBands(site: Site, f: Frame, ext = 6): RoadBand[] {
         { x: a.x - dx * ext + nx * w, y: a.y - dy * ext + ny * w },
       ].map((p) => toLocal(f, p));
       const mid = toLocal(f, { x: mx + nx * (w / 2), y: my + ny * (w / 2) });
-      return { poly, mid, w, label: e.roadLabel ?? "公道" };
+      return { poly, mid, w: e.roadWidth ?? 4, label: e.roadLabel ?? "公道" };
     });
 }
 
@@ -168,6 +173,7 @@ export type SiteContext = { site: Pt[]; setback: Pt[]; roads: RoadBand[] };
 
 /** 敷地・離れ線・道路を「建物の左下を原点にした建物座標（m）」で返す。間取り図の背景用 */
 export function siteInBuildingFrame(site: Site, g: GridSetting, setback: number): SiteContext {
+  site = effectiveSite(site);
   const f = baseFrame(site, g.baseEdge);
   const shift = (p: Pt) => ({ x: p.x - g.u, y: p.y - g.v });
   const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
@@ -253,6 +259,7 @@ export function shapeToCells(b: Building, unit: number): Set<string> {
  * u0: 底辺に沿ったマス目の原点（この値の倍数位置にマスの境界が来る）。v は setback に固定。
  */
 export function maxStair(site: Site, edgeIndex: number, setback: number, u0 = 0, unit = HALF): StairResult {
+  site = effectiveSite(site);
   const f = baseFrame(site, edgeIndex);
   const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
   const loc = site.points.map((p) => toLocal(f, p));

@@ -13,7 +13,7 @@
  * ★参考値です。確認申請の日影図は設計事務所・確認検査機関のソフトで作成してください。
  */
 import type { Pt, Project, Building } from "./types";
-import { buildingSolids, buildingToWorld, polygonArea, distToSegment, pointInPolygon, signedArea } from "./geometry";
+import { buildingSolids, buildingToWorld, polygonArea, distToSegment, pointInPolygon, signedArea, effectiveSite } from "./geometry";
 import { levels, rulesOf } from "./heightLimits";
 import { roofRise } from "./geometry";
 
@@ -107,7 +107,7 @@ export function offsetPolygonOut(pts: Pt[], dist: number): Pt[] {
 
 /** 令135条の12: 道路・水面等に接する辺を幅の 1/2 だけ外側へ（10m 超なら反対側から 5m 敷地側） */
 export function deemedBoundary(project: Project): Pt[] {
-  const { site } = project;
+  const site = effectiveSite(project.site);
   const n = site.points.length;
   const ccw = signedArea(site.points) > 0;
   const shift = site.points.map(() => 0);

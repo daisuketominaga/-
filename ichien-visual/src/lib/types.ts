@@ -13,6 +13,8 @@ export type SiteEdge = {
   roadWidth?: number;
   /** 道路種別の表示（例: 法42条1項1号 公道） */
   roadLabel?: string;
+  /** 法42条2項道路などの道路後退（セットバック）幅 m。この辺から内側へこの幅は道路扱いで建てられない（幅員1.8m→中心から2mで 1.1m など） */
+  roadSetback?: number;
   /** 補足メモ（例: NTT柱有） */
   note?: string;
 };
@@ -25,6 +27,8 @@ export type Site = {
   northDeg: number;
   /** 測量図に書かれた面積（m2）。未入力なら座標から計算 */
   areaOverride?: number;
+  /** 道路後退後の有効宅地面積（m2、販売図面の値）。未入力なら 面積 − 後退部分 で計算 */
+  effectiveAreaOverride?: number;
   /** 建ぺい率 % */
   coverageRatio: number;
   /** 容積率 % */

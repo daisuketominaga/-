@@ -5,7 +5,7 @@
 import type { Project, Face, HeightRules, Building } from "./types";
 import { DEFAULT_HEIGHT_RULES } from "./types";
 import { clearances } from "./grid";
-import { faceLength, faceNormalWorld, roofRise, facePointWorld, roofHeightAt, distToSegment, insideFootprint, footprintWorld } from "./geometry";
+import { faceLength, faceNormalWorld, roofRise, facePointWorld, roofHeightAt, distToSegment, insideFootprint, footprintWorld, effectiveSite } from "./geometry";
 import { baseFrame, toLocal } from "./grid";
 import { KODO_PRESETS, ZONE_PRESETS } from "./heightPresets";
 
@@ -71,7 +71,8 @@ export type LimitLine = { key: string; name: string; color: string; hAt: (m: num
 
 /** 真北に最も向いている面 */
 export function northFaceOf(project: Project): Face {
-  const { site, building: b } = project;
+  const { building: b } = project;
+  const site = effectiveSite(project.site);
   const nd = (site.northDeg * Math.PI) / 180;
   const north = { x: Math.sin(nd), y: Math.cos(nd) };
   const faces: Face[] = ["N", "S", "E", "W"];
@@ -97,7 +98,8 @@ export type RoadInfo = {
  * 区域にあるとき、他の道路も幅員最大の道路と同じ幅員とみなす（戸建規模の敷地ではほぼ常に該当）。
  */
 export function roadInfos(project: Project): RoadInfo[] {
-  const { site, building: b } = project;
+  const { building: b } = project;
+  const site = effectiveSite(project.site);
   const roads = site.edges.filter((e) => e.road && e.index < site.points.length);
   if (!roads.length) return [];
   const corners = footprintWorld(b); // 切り欠きを含む外形の頂点
@@ -140,7 +142,8 @@ export function roadLevelOffset(project: Project): number {
 }
 
 export function heightLimits(project: Project, face: Face): LimitLine[] {
-  const { site, building: b, grid } = project;
+  const { building: b, grid } = project;
+  const site = effectiveSite(project.site);
   const r = rulesOf(project);
   const roadEdge = site.edges.find((e) => e.road);
   const roadW = roadEdge?.roadWidth ?? 4;
@@ -259,7 +262,8 @@ function rayHit(o: { x: number; y: number }, dir: { x: number; y: number }, a: {
  * 北側の斜線は各点から真北方向に境界線までの水平距離（北側が道路なら道路の反対側まで）で計算。
  */
 export function checkLimits3D(project: Project, step = 0.1): Limit3D[] {
-  const { site, building: b, grid } = project;
+  const { building: b, grid } = project;
+  const site = effectiveSite(project.site);
   const r = rulesOf(project);
   const lv = levels(b);
   const rise = roofRise(b);
