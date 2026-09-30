@@ -756,7 +756,7 @@ function Stepper({ label, value, onMinus, onPlus }: { label: string; value: numb
 /** 敷地・道路を描くために建物の外側へ広げる余白（m、建物座標の左右上下） */
 function sitePadding(ctx: SiteContext, bw: number, bd: number, on: boolean) {
   if (!on) return { l: 0, r: 0, t: 0, b: 0 };
-  const pts = [...ctx.site, ...ctx.roads.flatMap((r) => r.poly)];
+  const pts = [...ctx.site, ...ctx.original, ...ctx.roads.flatMap((r) => r.poly)];
   const cap = (v: number) => Math.min(5, Math.max(0.6, v));
   return {
     l: cap(-Math.min(0, ...ctx.site.map((p) => p.x), ...ctx.roads.flatMap((r) => r.poly.map((p) => p.x)))),
@@ -789,8 +789,36 @@ export function SiteContextSvg({ ctx, project, ox, oy, px, flip, canvas, compact
             </g>
           );
         })}
+        {/* 道路後退（セットバック）部分: 後退前の境界線＋斜線 */}
+        {ctx.roadSetbacks.length > 0 && (
+          <g>
+            <defs>
+              <pattern id={clipId + "-hatch"} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="6" stroke="#b03a2e" strokeWidth="1" />
+              </pattern>
+            </defs>
+            <path d={`M${pts(ctx.original).replace(/ /g, " L")} Z M${pts(ctx.site).replace(/ /g, " L")} Z`} fill={`url(#${clipId}-hatch)`} fillRule="evenodd" opacity={0.6} />
+            <polygon points={pts(ctx.original)} fill="none" stroke="#6b7280" strokeWidth={1} strokeDasharray="3 3" />
+          </g>
+        )}
         <polygon points={pts(ctx.site)} fill="rgba(246,234,211,0.35)" stroke="#6b7280" strokeWidth={1.5} strokeLinejoin="round" />
         {ctx.setback.length > 2 && <polygon points={pts(ctx.setback)} fill="none" stroke="#c0392b" strokeWidth={0.8} strokeDasharray="5 4" />}
+        {ctx.roadSetbacks.map((sb, i) => {
+          // 後退線の 1/4 の位置から道路側へ後退幅の寸法を出し、文字は斜線の外（道路側）に置く
+          const mx = sb.a.x + (sb.b.x - sb.a.x) * 0.25, my = sb.a.y + (sb.b.y - sb.a.y) * 0.25;
+          const p0 = toPx(mx, my), p1 = toPx(mx + sb.n.x * sb.setback, my + sb.n.y * sb.setback);
+          const pt = toPx(mx + sb.n.x * (sb.setback + 0.25), my + sb.n.y * (sb.setback + 0.25));
+          const horiz = Math.abs(p1.x - p0.x) >= Math.abs(p1.y - p0.y);
+          const anchor = horiz ? (p1.x >= p0.x ? "start" : "end") : "middle";
+          const ty = horiz ? pt.y + 4 : p1.y >= p0.y ? pt.y + fs + 1 : pt.y - fs - 2;
+          return (
+            <g key={"sb" + i}>
+              <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#b03a2e" strokeWidth={1} />
+              <text x={pt.x} y={ty} textAnchor={anchor} fontSize={fs} fontWeight={700} fill="#b03a2e">道路後退 {sb.setback.toFixed(2)}m</text>
+              {!compact && <text x={pt.x} y={ty + fs + 1} textAnchor={anchor} fontSize={fs - 2} fill="#b03a2e">斜線＝後退部分 約{ctx.stripArea.toFixed(2)}㎡（敷地面積に入れない）</text>}
+            </g>
+          );
+        })}
       </g>
     </g>
   );

@@ -573,3 +573,23 @@ export function floorAreaOf(b: Building, rooms: { type: string; x: number; y: nu
   }
   return n * h * h;
 }
+
+/** 道路後退がある辺の情報（図に「後退線・斜線・後退幅」を描くため）。
+ *  a/b は後退線上の両端（有効敷地の頂点）、n は道路へ向かう外向きの単位ベクトル。 */
+export type SetbackEdgeInfo = { index: number; setback: number; width: number; label: string; a: Pt; b: Pt; n: Pt };
+export function setbackEdges(site: Site): SetbackEdgeInfo[] {
+  const eff = effectiveSite(site);
+  if (eff === site) return [];
+  const n = site.points.length;
+  const ccw = signedArea(site.points) > 0;
+  return site.edges
+    .filter((e) => e.road && (e.roadSetback ?? 0) > 0.001 && e.index < n)
+    .map((e) => {
+      const a0 = site.points[e.index];
+      const b0 = site.points[(e.index + 1) % n];
+      const dx = b0.x - a0.x, dy = b0.y - a0.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const out = ccw ? { x: dy / len, y: -dx / len } : { x: -dy / len, y: dx / len };
+      return { index: e.index, setback: e.roadSetback ?? 0, width: e.roadWidth ?? 4, label: e.roadLabel ?? "公道", a: eff.points[e.index], b: eff.points[(e.index + 1) % n], n: out };
+    });
+}

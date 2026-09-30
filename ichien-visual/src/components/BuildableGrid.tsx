@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, pointInPolygon, insideFootprint } from "@/lib/geometry";
+import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, setbackEdges, setbackStripArea, pointInPolygon, insideFootprint } from "@/lib/geometry";
 import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearancesMin, roadBands, cellsToShape } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
@@ -34,17 +34,22 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const inner = useMemo(() => (setback > 0 ? insetPolygon(site.points, setback) : site.points), [site.points, setback]);
   const loc = site.points.map((p) => toLocal(frame, p));
   const innerLoc = inner.map((p) => toLocal(frame, p));
+  // 道路後退（セットバック）: 後退前の境界線と後退部分を図に残す
+  const origLoc = project.site.points.map((p) => toLocal(frame, p));
+  const sbEdges = useMemo(() => setbackEdges(project.site), [project.site]);
+  const stripArea = useMemo(() => setbackStripArea(project.site), [project.site]);
+  const rotN = (n: { x: number; y: number }) => ({ x: n.x * frame.t.x + n.y * frame.t.y, y: n.x * frame.n.x + n.y * frame.n.y });
 
   // 道路帯（底辺座標）
   const roadW = Math.min(6, Math.max(0, ...site.edges.filter((e) => e.road).map((e) => e.roadWidth ?? 4)));
   const roads = roadBands(site, frame, 6);
 
   const allU = [...loc.map((p) => p.x), ...roads.flatMap((r) => r.poly.map((p) => p.x))];
-  const allV = [...loc.map((p) => p.y), ...roads.flatMap((r) => r.poly.map((p) => p.y))];
-  const minU = Math.min(...loc.map((p) => p.x)) - 1.5;
-  const maxU = Math.max(...loc.map((p) => p.x)) + 1.5;
+  const allV = [...loc.map((p) => p.y), ...origLoc.map((p) => p.y), ...roads.flatMap((r) => r.poly.map((p) => p.y))];
+  const minU = Math.min(...loc.map((p) => p.x), ...origLoc.map((p) => p.x)) - 1.5;
+  const maxU = Math.max(...loc.map((p) => p.x), ...origLoc.map((p) => p.x)) + 1.5;
   const minV = Math.min(-1.5, Math.min(...allV) - 0.3, -roadW - 0.6);
-  const maxV = Math.max(...loc.map((p) => p.y)) + 1.5;
+  const maxV = Math.max(...loc.map((p) => p.y), ...origLoc.map((p) => p.y)) + 1.5;
   void allU;
   const W = (maxU - minU) * PX;
   const H = (maxV - minV) * PX;
@@ -524,8 +529,36 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
               const full = Math.abs((v / MODULE) % 1) < 1e-6;
               return <line key={"v" + v} x1={X(minU)} y1={Y(v)} x2={X(maxU)} y2={Y(v)} stroke={full ? "#c9d3e0" : "#e6ebf2"} strokeWidth={full ? 1 : 0.7} strokeDasharray={full ? undefined : "2 3"} />;
             })}
-            {/* 敷地 */}
+            {/* 道路後退（セットバック）部分: 後退前の境界線＋斜線 */}
+            {sbEdges.length > 0 && (
+              <g>
+                <defs>
+                  <pattern id="gridSetbackHatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="0" y2="7" stroke="#b03a2e" strokeWidth="1.1" />
+                  </pattern>
+                </defs>
+                <path d={`M${origLoc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" L")} Z M${loc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" L")} Z`} fill="url(#gridSetbackHatch)" fillRule="evenodd" opacity={0.65} />
+                <polygon points={origLoc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")} fill="none" stroke="#1b2430" strokeWidth={1} strokeDasharray="4 3" />
+              </g>
+            )}
+            {/* 敷地（後退後の有効敷地） */}
             <polygon points={loc.map((p) => `${X(p.x)},${Y(p.y)}`).join(" ")} fill="rgba(246,234,211,0.55)" stroke="#1b2430" strokeWidth={2.5} strokeLinejoin="round" />
+            {sbEdges.map((e, i) => {
+              const a = toLocal(frame, e.a), b = toLocal(frame, e.b), n = rotN(e.n);
+              const mx = a.x + (b.x - a.x) * 0.25, my = a.y + (b.y - a.y) * 0.25;
+              const p0 = { x: X(mx), y: Y(my) }, p1 = { x: X(mx + n.x * e.setback), y: Y(my + n.y * e.setback) };
+              const pt = { x: X(mx + n.x * (e.setback + 0.25)), y: Y(my + n.y * (e.setback + 0.25)) };
+              const horiz = Math.abs(p1.x - p0.x) >= Math.abs(p1.y - p0.y);
+              const anchor = horiz ? (p1.x >= p0.x ? "start" : "end") : "middle";
+              const ty = horiz ? pt.y + 4 : p1.y >= p0.y ? pt.y + 12 : pt.y - 14;
+              return (
+                <g key={"sb" + i}>
+                  <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#b03a2e" strokeWidth={1.5} markerStart="url(#dimS)" markerEnd="url(#dimE)" />
+                  <text x={pt.x} y={ty} textAnchor={anchor} fontSize={12} fontWeight={700} fill="#b03a2e">道路後退 {round(e.setback, 2)}m</text>
+                  <text x={pt.x} y={ty + 13} textAnchor={anchor} fontSize={10} fill="#b03a2e">斜線＝後退部分 約{round(stripArea, 2)}㎡（幅員{round(e.width, 2)}m→{round(e.width + 2 * e.setback, 2)}m）</text>
+                </g>
+              );
+            })}
             {/* 底辺を強調 */}
             <line x1={X(0)} y1={Y(0)} x2={X(frame.len)} y2={Y(0)} stroke="#1b2430" strokeWidth={5} />
             <text x={X(frame.len / 2)} y={Y(0) + (flip ? -8 : 18)} textAnchor="middle" fontSize={12} fill="#1b2430">底辺 {edgeLabel(grid.baseEdge)}　{round(frame.len, 2)} m</text>

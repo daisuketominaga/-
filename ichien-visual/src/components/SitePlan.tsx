@@ -368,6 +368,12 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
                 <marker id="arrowS" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto">
                   <path d="M8,0 L0,4 L8,8 z" fill="#333" />
                 </marker>
+                <marker id="arrowER" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 z" fill="#b03a2e" />
+                </marker>
+                <marker id="arrowSR" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto">
+                  <path d="M8,0 L0,4 L8,8 z" fill="#b03a2e" />
+                </marker>
               </defs>
 
               {/* 敷地 */}
@@ -378,31 +384,48 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
                 <g>
                   <defs>
                     <pattern id="setbackHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                      <line x1="0" y1="0" x2="0" y2="8" stroke="#b03a2e" strokeWidth="1.2" />
+                      <line x1="0" y1="0" x2="0" y2="8" stroke="#b03a2e" strokeWidth="1.6" />
                     </pattern>
                   </defs>
                   <path
                     d={`M${polyPx.map((p) => `${p.x},${p.y}`).join(" L")} Z M${eff.points.map(toPx).map((p) => `${p.x},${p.y}`).join(" L")} Z`}
                     fill="url(#setbackHatch)"
                     fillRule="evenodd"
-                    opacity={0.7}
+                    opacity={0.85}
                   />
-                  <polygon points={eff.points.map(toPx).map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#b03a2e" strokeWidth={1.5} strokeDasharray="8 4" />
+                  <polygon points={eff.points.map(toPx).map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="#b03a2e" strokeWidth={2} strokeDasharray="8 4" />
                   {site.edges
                     .filter((e) => e.road && (e.roadSetback ?? 0) > 0.001 && e.index < site.points.length)
                     .map((e) => {
+                      // 後退線の 1/4 の位置から現況境界まで後退幅の寸法矢印を出し、文字は道路側（斜線の外）に置く
                       const a = eff.points[e.index];
                       const b = eff.points[(e.index + 1) % site.points.length];
                       const n = outwardNormal(e.index);
-                      const m = toPx({ x: (a.x + b.x) / 2 - n.x * 0.9, y: (a.y + b.y) / 2 - n.y * 0.9 });
-                      let ang = (Math.atan2(toPx(b).y - toPx(a).y, toPx(b).x - toPx(a).x) * 180) / Math.PI;
-                      if (ang > 90 || ang < -90) ang += 180;
+                      const sb = e.roadSetback ?? 0;
+                      const mx = a.x + (b.x - a.x) * 0.25, my = a.y + (b.y - a.y) * 0.25;
+                      const p0 = toPx({ x: mx, y: my });
+                      const p1 = toPx({ x: mx + n.x * sb, y: my + n.y * sb });
+                      const pt = toPx({ x: mx + n.x * (sb + 0.25), y: my + n.y * (sb + 0.25) });
+                      const horiz = Math.abs(p1.x - p0.x) >= Math.abs(p1.y - p0.y);
+                      const anchor = horiz ? (p1.x >= p0.x ? "start" : "end") : "middle";
+                      const ty = horiz ? pt.y + 4 : p1.y >= p0.y ? pt.y + 12 : pt.y - 14;
                       return (
-                        <text key={"sb" + e.index} x={m.x} y={m.y} textAnchor="middle" fontSize={11} fill="#b03a2e" transform={`rotate(${ang} ${m.x} ${m.y})`}>
-                          道路後退線（後退 {round(e.roadSetback ?? 0, 2)}m・後退部分 約{round(strip, 2)}㎡）
-                        </text>
+                        <g key={"sb" + e.index}>
+                          <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="#b03a2e" strokeWidth={1.5} markerStart="url(#arrowSR)" markerEnd="url(#arrowER)" />
+                          <text x={pt.x} y={ty} textAnchor={anchor} fontSize={13} fontWeight={700} fill="#b03a2e">後退 {round(sb, 2)}m</text>
+                          <text x={pt.x} y={ty + 13} textAnchor={anchor} fontSize={10} fill="#b03a2e">幅員{round(e.roadWidth ?? 4, 2)}m→中心から2m</text>
+                        </g>
                       );
                     })}
+                  {/* 凡例 */}
+                  <g transform={`translate(12 ${H - 78})`}>
+                    <rect x={0} y={0} width={330} height={66} rx={4} fill="#fff" stroke="#b03a2e" strokeWidth={1} opacity={0.95} />
+                    <rect x={8} y={8} width={26} height={16} fill="url(#setbackHatch)" stroke="#b03a2e" strokeWidth={0.8} />
+                    <text x={42} y={20} fontSize={12} fontWeight={700} fill="#b03a2e">道路後退部分（セットバック）約{round(strip, 2).toFixed(2)}㎡</text>
+                    <line x1={8} y1={36} x2={34} y2={36} stroke="#b03a2e" strokeWidth={1.5} strokeDasharray="8 4" />
+                    <text x={42} y={40} fontSize={11} fill="#333">赤の破線＝道路後退線（後退後の敷地境界）</text>
+                    <text x={8} y={58} fontSize={11} fill="#333">敷地全体 {round(area, 2).toFixed(2)}㎡ − 後退 {round(strip, 2).toFixed(2)}㎡ ＝ 有効 {round(effArea, 2).toFixed(2)}㎡（建ぺい率・容積率の分母）</text>
+                  </g>
                 </g>
               )}
 

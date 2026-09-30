@@ -1,6 +1,6 @@
 import type { Pt, Site, GridSetting, Building } from "./types";
 import { HALF, MODULE } from "./types";
-import { pointInPolygon, insetPolygon, round, dist, footprintPolygon, insideFootprint, effectiveSite } from "./geometry";
+import { pointInPolygon, insetPolygon, round, dist, footprintPolygon, insideFootprint, effectiveSite, setbackEdges, setbackStripArea } from "./geometry";
 import type { Notch } from "./types";
 
 /** 底辺の枠組み: 始点 a、辺に沿った単位ベクトル t、内側向きの単位法線 n */
@@ -213,18 +213,26 @@ export function roadBands(site: Site, f: Frame, ext = 6): RoadBand[] {
     });
 }
 
-export type SiteContext = { site: Pt[]; setback: Pt[]; roads: RoadBand[] };
+/** 道路後退（セットバック）の帯を図に描くための情報（建物座標） */
+export type RoadSetbackBand = { a: Pt; b: Pt; n: Pt; setback: number; width: number; label: string };
+export type SiteContext = { site: Pt[]; setback: Pt[]; roads: RoadBand[]; original: Pt[]; roadSetbacks: RoadSetbackBand[]; stripArea: number };
 
 /** 敷地・離れ線・道路を「建物の左下を原点にした建物座標（m）」で返す。間取り図の背景用 */
 export function siteInBuildingFrame(site: Site, g: GridSetting, setback: number): SiteContext {
+  const raw = site;
   site = effectiveSite(site);
   const f = baseFrame(site, g.baseEdge);
   const shift = (p: Pt) => ({ x: p.x - g.u, y: p.y - g.v });
+  const loc = (p: Pt) => shift(toLocal(f, p));
   const inner = setback > 0 ? insetPolygon(site.points, setback) : site.points;
+  const rotN = (n: Pt) => ({ x: n.x * f.t.x + n.y * f.t.y, y: n.x * f.n.x + n.y * f.n.y });
   return {
-    site: site.points.map((p) => shift(toLocal(f, p))),
-    setback: inner.map((p) => shift(toLocal(f, p))),
+    site: site.points.map(loc),
+    setback: inner.map(loc),
     roads: roadBands(site, f, 3).map((r) => ({ ...r, poly: r.poly.map(shift), mid: shift(r.mid) })),
+    original: raw.points.map(loc),
+    roadSetbacks: setbackEdges(raw).map((e) => ({ a: loc(e.a), b: loc(e.b), n: rotN(e.n), setback: e.setback, width: e.width, label: e.label })),
+    stripArea: setbackStripArea(raw),
   };
 }
 
