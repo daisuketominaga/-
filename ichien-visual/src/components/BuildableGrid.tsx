@@ -155,7 +155,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const applyCells = (cells: Set<string>, ou: number, ov: number) => {
     const r = cellsToShape(cells, unit);
     setProject((p) => {
-      const paint = { u: round(ou, 4), v: round(ov, 4), unit, cells: Array.from(cells) };
+      const paint = { u: round(ou, 4), v: round(ov, 4), unit, cells: Array.from(cells), setback };
       if (!r.cells) return { ...p, grid: { ...p.grid, paint } };
       const g = { ...p.grid, u: round(ou + r.u, 4), v: round(ov + r.v, 4), paint };
       return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
@@ -171,7 +171,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   const [cellHint, setCellHint] = useState<string | null>(null);
   /** 塗りマスの原点と一覧。未設定なら「離れ線の角」を原点に、今の建物に入っているマスを塗った状態から始める */
   const paint = useMemo(() => {
-    if (grid.paint && Math.abs(grid.paint.unit - unit) < 1e-9) return { u: grid.paint.u, v: grid.paint.v, cells: new Set(grid.paint.cells) };
+    // 離れの値が変わっていたら原点を取り直す（古い離れ線の角のままだと 600 にならない）
+    if (grid.paint && Math.abs(grid.paint.unit - unit) < 1e-9 && (grid.paint.setback === undefined || Math.abs(grid.paint.setback - setback) < 1e-9)) return { u: grid.paint.u, v: grid.paint.v, cells: new Set(grid.paint.cells) };
     const ou = leftEdgeU(), ov = setback;
     const cells = new Set<string>();
     const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
@@ -197,7 +198,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
   /** 原点を離れ線の角に戻す／半マスずらす（マスは塗り直し） */
   const resetPaint = (du = 0, dv = 0) => {
     const ou = round(paint.u + du, 4), ov = round(paint.v + dv, 4);
-    setProject((p) => ({ ...p, grid: { ...p.grid, paint: { u: ou, v: ov, unit, cells: [] } } }));
+    setProject((p) => ({ ...p, grid: { ...p.grid, paint: { u: ou, v: ov, unit, cells: [], setback } } }));
     setCellHint(null);
   };
   /** 囲った中を塗りつぶす: 塗ったマスに囲まれて外へ出られない未塗りマスと、両隣（左右または上下）が塗られている1マスの隙間を塗る（離れ線の内側だけ） */
@@ -234,6 +235,24 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     applyCells(cells, paint.u, paint.v);
     setCellHint(added || skipped ? `${added} マスを塗りつぶしました。${skipped ? `${skipped} マスは離れ線の外なので塗っていません。` : ""}` : "塗りつぶす隙間はありませんでした。");
   };
+  /** 塗ったマスごと原点をずらして、その方向の一番近いところが離れ（600mm など）ぴったりになるようにする */
+  const alignPaint = (side: "left" | "right" | "bottom" | "top") => {
+    const c = clm[side];
+    if (!c) { setCellHint("その方向の境界が見つかりません。"); return; }
+    const delta = round(setback - c.d, 4); // 正なら境界から遠ざける向きに動かす
+    if (Math.abs(delta) < 0.0005) { setCellHint("すでにぴったりです。"); return; }
+    const du = side === "left" ? delta : side === "right" ? -delta : 0;
+    const dv = side === "bottom" ? delta : side === "top" ? -delta : 0;
+    applyCells(new Set(paint.cells), round(paint.u + du, 4), round(paint.v + dv, 4));
+    setCellHint(`${side === "left" ? "左" : side === "right" ? "右" : side === "bottom" ? "底辺側" : "奥"}の一番近いところを ${Math.round(setback * 1000)}mm に揃えました（${Math.round(Math.abs(delta) * 1000)}mm 移動）。ほかの方向の距離も確認してください。`);
+  };
+  /** 塗ったマスのうち、今の原点では離れ線の外に出ているもの（赤で表示） */
+  const outCells = useMemo(() => {
+    const out = new Set<string>();
+    for (const k of paint.cells) { const [i, j] = k.split(",").map(Number); if (!cellOk(i, j, paint.u, paint.v)) out.add(k); }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paint, inner, unit]);
   const paintAll = () => {
     // 離れ線の内側に丸ごと入るマスを全部塗る
     const cells = new Set<string>();
@@ -409,6 +428,14 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
                 <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, HALF)}>原点 ↑半マス</button>
                 <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, -HALF)}>原点 ↓半マス</button>
               </div>
+              <div className="pt-1">境界までの一番近いところを {Math.round(setback * 1000)}mm ぴったりに揃える（塗ったマスごと原点を動かします）</div>
+              <div className="grid grid-cols-4 gap-1">
+                <button className="btn-ghost px-1 py-0.5" onClick={() => alignPaint("left")}>← 左</button>
+                <button className="btn-ghost px-1 py-0.5" onClick={() => alignPaint("right")}>右 →</button>
+                <button className="btn-ghost px-1 py-0.5" onClick={() => alignPaint("bottom")}>↓ 底辺側</button>
+                <button className="btn-ghost px-1 py-0.5" onClick={() => alignPaint("top")}>↑ 奥</button>
+              </div>
+              {outCells.size > 0 && <div className="text-red-700">赤のマス {outCells.size} 個は離れ線の外に出ています。外すか、原点を動かしてください。</div>}
               <div className="flex flex-wrap gap-1 pt-1">
                 <button className="btn-primary px-2 py-0.5" onClick={fillEnclosed}>囲った中を塗りつぶす</button>
                 <button className="btn-ghost px-2 py-0.5" onClick={paintAll}>選べるマスを全部塗る</button>
@@ -521,8 +548,9 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
                 const ok = cellOk(i, j, pu, pv);
                 if (!painted && !ok) continue;
                 const dropped = painted && droppedCells.has(key);
+                const outside = painted && outCells.has(key);
                 const u = pu + i * unit, v = pv + j * unit;
-                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={dropped ? "rgba(240,140,30,0.45)" : painted ? "rgba(47,111,237,0.45)" : "rgba(46,160,67,0.16)"} stroke={painted ? "#fff" : "rgba(46,160,67,0.45)"} strokeWidth={painted ? 1 : 0.6} style={{ pointerEvents: "none" }} />);
+                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={outside ? "rgba(220,60,60,0.5)" : dropped ? "rgba(240,140,30,0.45)" : painted ? "rgba(47,111,237,0.45)" : "rgba(46,160,67,0.16)"} stroke={painted ? "#fff" : "rgba(46,160,67,0.45)"} strokeWidth={painted ? 1 : 0.6} style={{ pointerEvents: "none" }} />);
               }
               // 原点の印
               const o = { x: X(pu), y: Y(pv) };
