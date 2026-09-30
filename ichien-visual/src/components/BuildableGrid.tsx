@@ -3,8 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite } from "@/lib/geometry";
-import { baseFrame, toLocal, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape, shapeToCells } from "@/lib/grid";
+import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, pointInPolygon } from "@/lib/geometry";
+import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape, shapeToCells } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -124,6 +124,30 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     });
   };
   const cellKeyAt = (uv: { u: number; v: number }, ou: number, ov: number) => `${Math.floor((uv.u - ou) / unit)},${Math.floor((uv.v - ov) / unit)}`;
+  /** マス（列 i・行 j、原点 ou,ov）が離れ線の内側に完全に入るか（4隅を 1mm 内側に寄せて判定） */
+  const cellOk = (i: number, j: number, ou: number, ov: number) => {
+    const e = 0.001;
+    const u0 = ou + i * unit, v0 = ov + j * unit;
+    return [[u0 + e, v0 + e], [u0 + unit - e, v0 + e], [u0 + e, v0 + unit - e], [u0 + unit - e, v0 + unit - e]].every(([u, v]) => pointInPolygon(toWorld(frame, { x: u, y: v }), inner));
+  };
+  const [cellHint, setCellHint] = useState<string | null>(null);
+  /** マス選びを1マスから始める: 底辺の中央付近で離れ線に入る最初のマスに枠を置く */
+  const startOneCell = () => {
+    const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
+    const uMid = (Math.min(...us) + Math.max(...us)) / 2;
+    const ou = Math.round((uMid - unit / 2) / unit) * unit;
+    for (let j = 0; j * unit < Math.max(...vs); j++) for (let k = 0; k < 40; k++) {
+      const i = k % 2 ? -Math.ceil(k / 2) : Math.ceil(k / 2);
+      if (cellOk(i, j, ou, 0)) {
+        setProject((p) => {
+          const g = { ...p.grid, u: round(ou + i * unit, 4), v: round(j * unit, 4) };
+          return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, unit, unit, p.building), notches: [] } };
+        });
+        return;
+      }
+    }
+    setCellHint("離れ線の内側に入るマスが見つかりません。敷地図の「境界からの離れ」を確認してください。");
+  };
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (readOnly) return;
     const uv = pointerToUV(e);
@@ -133,6 +157,9 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       const cells = shapeToCells(building, unit);
       const key = cellKeyAt(uv, grid.u, grid.v);
       const add = !cells.has(key);
+      const [ci, cj] = key.split(",").map(Number);
+      if (add && !cellOk(ci, cj, grid.u, grid.v)) { setCellHint(`このマスは離れ線（境界から ${Math.round(setback * 1000)}mm）の外なので選べません。`); return; }
+      setCellHint(null);
       if (add) cells.add(key); else cells.delete(key);
       dragRef.current = { kind: "cells", add, cells, ou: grid.u, ov: grid.v, last: key };
       applyCells(cells, grid.u, grid.v);
@@ -185,6 +212,8 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       const key = cellKeyAt(uv, d.ou, d.ov);
       if (key === d.last) return;
       d.last = key;
+      const [ci, cj] = key.split(",").map(Number);
+      if (d.add && !cellOk(ci, cj, d.ou, d.ov)) return; // 離れ線の外は足せない
       if (d.add) d.cells.add(key); else d.cells.delete(key);
       applyCells(d.cells, d.ou, d.ov);
     }
@@ -265,6 +294,16 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             <button className={`flex-1 rounded px-2 py-1 ${mode === "move" ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setMode("move")}>動かす・伸ばす</button>
             <button className={`flex-1 rounded px-2 py-1 ${mode === "cells" ? "bg-brand-600 text-white" : "bg-slate-100"}`} onClick={() => setMode("cells")}>マスを足す・消す</button>
           </div>
+          {mode === "cells" && (
+            <div className="space-y-1 rounded bg-emerald-50 p-2 text-[11px] leading-relaxed text-emerald-900">
+              <div>緑のマスが、境界から {Math.round(setback * 1000)}mm の離れ線の内側に丸ごと入る「選べるマス」です。青が今の建物。離れ線の外のマスはクリックしても入りません（自動で {Math.round(setback * 1000)}mm 離れます）。</div>
+              <div className="flex gap-1">
+                <button className="btn-ghost px-2 py-0.5" onClick={startOneCell}>1マスから始める</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={autoStair}>選べるマスを全部入れる</button>
+              </div>
+              {cellHint && <div className="text-red-700">{cellHint}</div>}
+            </div>
+          )}
           <p className="text-[11px] leading-relaxed text-slate-500">{mode === "move" ? "図の建物をドラッグで移動、辺の□をドラッグで伸縮できます。" : "図のマスをクリック／ドラッグで、建物にマスを足したり消したりできます（角の切り欠きで表せる階段形に丸めます）。"}</p>
           <Stepper label="幅（底辺に沿って）" value={building.w} onChange={(v) => apply({ w: v })} />
           <Stepper label="奥行（底辺から内側へ）" value={building.d} onChange={(v) => apply({ d: v })} />
@@ -343,13 +382,18 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             <polygon data-building="1" points={footprintPolygon(building).map((q) => `${X(bu + q.x)},${Y(bv + q.y)}`).join(" ")} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} strokeLinejoin="round" style={{ cursor: readOnly ? undefined : mode === "cells" ? "crosshair" : "move" }} />
             {/* マス編集モード: 枠の周り1マスまで薄く表示（クリックで追加） */}
             {!readOnly && mode === "cells" && (() => {
+              // 敷地の中のマスを全部見て、離れ線の内側に入るマスを緑（選べる）、建物に入っているマスを青で示す
               const cells = shapeToCells(building, unit);
-              const ni = Math.round(building.w / unit), nj = Math.round(building.d / unit);
+              const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
+              const i0 = Math.floor((Math.min(...us) - bu) / unit) - 1, i1 = Math.ceil((Math.max(...us) - bu) / unit) + 1;
+              const j0 = Math.floor((Math.min(...vs) - bv) / unit) - 1, j1 = Math.ceil((Math.max(...vs) - bv) / unit) + 1;
               const out: React.ReactNode[] = [];
-              for (let i = -1; i <= ni; i++) for (let j = -1; j <= nj; j++) {
+              for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
                 const inside = cells.has(`${i},${j}`);
+                const ok = cellOk(i, j, bu, bv);
+                if (!inside && !ok) continue;
                 const u = bu + i * unit, v = bv + j * unit;
-                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={inside ? "rgba(47,111,237,0.08)" : "rgba(47,111,237,0.03)"} stroke="rgba(47,111,237,0.35)" strokeWidth={0.6} style={{ pointerEvents: "none" }} />);
+                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={inside ? "rgba(47,111,237,0.10)" : "rgba(46,160,67,0.16)"} stroke={inside ? "rgba(47,111,237,0.4)" : "rgba(46,160,67,0.45)"} strokeWidth={0.6} style={{ pointerEvents: "none" }} />);
               }
               return out;
             })()}
