@@ -286,6 +286,8 @@ export type GridSetting = {
   flip?: boolean;
   /** 建築可能範囲のマス目の最小単位 m（0.91 / 0.455 / 0.2275）。未設定は 0.455 */
   unit?: number;
+  /** タップで塗ったマス（建築可能範囲）。原点 u,v は底辺座標（離れ線の角）、cells は "列,行"。unit が変わったら作り直す */
+  paint?: { u: number; v: number; unit: number; cells: string[] };
 };
 
 export const MODULE = 0.91;

@@ -3,8 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import type { Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
-import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, pointInPolygon } from "@/lib/geometry";
-import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape, shapeToCells } from "@/lib/grid";
+import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, pointInPolygon, insideFootprint } from "@/lib/geometry";
+import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearances, roadBands, cellsToShape } from "@/lib/grid";
 import { downloadSvgAsPng } from "@/lib/store";
 
 type Props = {
@@ -66,6 +66,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     setProject((p) => {
       const g = {
         ...p.grid,
+        paint: undefined, // 枠を手で動かしたら塗りマスは建物から作り直す
         ...(patch.baseEdge !== undefined ? { baseEdge: patch.baseEdge } : {}),
         ...(patch.flip !== undefined ? { flip: patch.flip } : {}),
         // 位置は「今の位置の端数（離れ線に揃えた 0.6 など）」を保ったまま unit 刻みで動かす
@@ -102,7 +103,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       return;
     }
     setProject((p) => {
-      const g = { ...p.grid, u: r.u, v: r.v };
+      const g = { ...p.grid, u: r.u, v: r.v, paint: undefined };
       return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
     });
   };
@@ -120,7 +121,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     for (let k = 0; k < 20; k++) { const m = (lo + hi) / 2; if (fitsAt(m)) lo = m; else hi = m; }
     const t = Math.floor(lo * 1000) / 1000;
     setProject((p) => {
-      const g = { ...p.grid, u: round(dir === "left" ? p.grid.u - t : dir === "right" ? p.grid.u + t : p.grid.u, 4), v: round(dir === "far" ? p.grid.v + t : dir === "near" ? p.grid.v - t : p.grid.v, 4) };
+      const g = { ...p.grid, paint: undefined, u: round(dir === "left" ? p.grid.u - t : dir === "right" ? p.grid.u + t : p.grid.u, 4), v: round(dir === "far" ? p.grid.v + t : dir === "near" ? p.grid.v - t : p.grid.v, 4) };
       return { ...p, grid: g, building: buildingFromGrid(p.site, g, p.building.w, p.building.d, p.building) };
     });
   };
@@ -148,11 +149,13 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse());
     return { u: flip ? maxU - pt.x / PX : minU + pt.x / PX, v: flip ? minV + pt.y / PX : maxV - pt.y / PX };
   };
+  /** 塗ったマスを保存し、そこから建物（外接する枠＋角の切り欠き）を作り直す。マスが 0 なら建物はそのまま */
   const applyCells = (cells: Set<string>, ou: number, ov: number) => {
     const r = cellsToShape(cells, unit);
-    if (!r.cells) return;
     setProject((p) => {
-      const g = { ...p.grid, u: round(ou + r.u, 4), v: round(ov + r.v, 4) };
+      const paint = { u: round(ou, 4), v: round(ov, 4), unit, cells: Array.from(cells) };
+      if (!r.cells) return { ...p, grid: { ...p.grid, paint } };
+      const g = { ...p.grid, u: round(ou + r.u, 4), v: round(ov + r.v, 4), paint };
       return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, r.w, r.d, p.building), notches: r.notches } };
     });
   };
@@ -164,25 +167,45 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     return [[u0 + e, v0 + e], [u0 + unit - e, v0 + e], [u0 + e, v0 + unit - e], [u0 + unit - e, v0 + unit - e]].every(([u, v]) => pointInPolygon(toWorld(frame, { x: u, y: v }), inner));
   };
   const [cellHint, setCellHint] = useState<string | null>(null);
-  /** マス選びを離れ線の角から始める:
-   *  底辺（選んだ辺）から離れ分だけ内側の線と、左側の離れ線が交わる角に1マス目を置く。
-   *  以後の 910mm グリッドはこの角を原点に並ぶので、緑のマスをタップしていくだけで範囲が決まる。
-   *  左の境界が斜めで角のマスが入らないときは、右へ1マスずつずらして最初に入る位置にする */
-  const startOneCell = () => {
-    const vs = loc.map((p) => p.y);
-    const ou = leftEdgeU(); // 底辺の1マス目の高さでの左の離れ線の位置
-    const ov = setback; // 底辺の離れ線
-    for (let j = 0; ov + j * unit < Math.max(...vs); j++) for (let i = 0; i < 40; i++) {
-      if (cellOk(i, j, ou, ov)) {
-        setProject((p) => {
-          const g = { ...p.grid, u: round(ou + i * unit, 4), v: round(ov + j * unit, 4) };
-          return { ...p, grid: g, building: { ...buildingFromGrid(p.site, g, unit, unit, p.building), notches: [] } };
-        });
-        setCellHint(null);
-        return;
-      }
+  /** 塗りマスの原点と一覧。未設定なら「離れ線の角」を原点に、今の建物に入っているマスを塗った状態から始める */
+  const paint = useMemo(() => {
+    if (grid.paint && Math.abs(grid.paint.unit - unit) < 1e-9) return { u: grid.paint.u, v: grid.paint.v, cells: new Set(grid.paint.cells) };
+    const ou = leftEdgeU(), ov = setback;
+    const cells = new Set<string>();
+    const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
+    const i0 = Math.floor((Math.min(...us) - ou) / unit) - 1, i1 = Math.ceil((Math.max(...us) - ou) / unit) + 1;
+    const j0 = Math.floor((Math.min(...vs) - ov) / unit) - 1, j1 = Math.ceil((Math.max(...vs) - ov) / unit) + 1;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const cu = ou + (i + 0.5) * unit, cv = ov + (j + 0.5) * unit;
+      if (insideFootprint(building, cu - grid.u, cv - grid.v)) cells.add(`${i},${j}`);
     }
-    setCellHint("離れ線の内側に入るマスが見つかりません。敷地図の「境界からの離れ」を確認してください。");
+    return { u: ou, v: ov, cells };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid.paint, unit, setback, building, grid.u, grid.v, innerLoc]);
+  /** 塗ったマスのうち、階段形に丸めた結果の建物に入っていないもの（橙で表示） */
+  const droppedCells = useMemo(() => {
+    const out = new Set<string>();
+    for (const k of paint.cells) {
+      const [i, j] = k.split(",").map(Number);
+      const cu = paint.u + (i + 0.5) * unit, cv = paint.v + (j + 0.5) * unit;
+      if (!insideFootprint(building, cu - grid.u, cv - grid.v)) out.add(k);
+    }
+    return out;
+  }, [paint, building, grid.u, grid.v, unit]);
+  /** 原点を離れ線の角に戻す／半マスずらす（マスは塗り直し） */
+  const resetPaint = (du = 0, dv = 0) => {
+    const ou = round(paint.u + du, 4), ov = round(paint.v + dv, 4);
+    setProject((p) => ({ ...p, grid: { ...p.grid, paint: { u: ou, v: ov, unit, cells: [] } } }));
+    setCellHint(null);
+  };
+  const paintAll = () => {
+    // 離れ線の内側に丸ごと入るマスを全部塗る
+    const cells = new Set<string>();
+    const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
+    const i0 = Math.floor((Math.min(...us) - paint.u) / unit) - 1, i1 = Math.ceil((Math.max(...us) - paint.u) / unit) + 1;
+    const j0 = Math.floor((Math.min(...vs) - paint.v) / unit) - 1, j1 = Math.ceil((Math.max(...vs) - paint.v) / unit) + 1;
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) if (cellOk(i, j, paint.u, paint.v)) cells.add(`${i},${j}`);
+    applyCells(cells, paint.u, paint.v);
   };
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (readOnly) return;
@@ -190,15 +213,15 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
     const target = e.target as SVGElement;
     const handle = target.getAttribute("data-handle") as "left" | "right" | "top" | "bottom" | null;
     if (mode === "cells") {
-      const cells = shapeToCells(building, unit);
-      const key = cellKeyAt(uv, grid.u, grid.v);
+      const cells = new Set(paint.cells);
+      const key = cellKeyAt(uv, paint.u, paint.v);
       const add = !cells.has(key);
       const [ci, cj] = key.split(",").map(Number);
-      if (add && !cellOk(ci, cj, grid.u, grid.v)) { setCellHint(`このマスは離れ線（境界から ${Math.round(setback * 1000)}mm）の外なので選べません。`); return; }
+      if (add && !cellOk(ci, cj, paint.u, paint.v)) { setCellHint(`このマスは離れ線（境界から ${Math.round(setback * 1000)}mm）の外なので選べません。`); return; }
       setCellHint(null);
       if (add) cells.add(key); else cells.delete(key);
-      dragRef.current = { kind: "cells", add, cells, ou: grid.u, ov: grid.v, last: key };
-      applyCells(cells, grid.u, grid.v);
+      dragRef.current = { kind: "cells", add, cells, ou: paint.u, ov: paint.v, last: key };
+      applyCells(cells, paint.u, paint.v);
       (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
       return;
     }
@@ -242,7 +265,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
         const others = (p.building.notches ?? []).filter((n) => n.corner !== d.corner);
         const keep = nw >= unit - 1e-6 && nd >= unit - 1e-6;
         const n: Notch = { corner: d.corner, w: Math.min(nw, p.building.w - unit), d: Math.min(nd, p.building.d - unit) };
-        return { ...p, building: { ...p.building, notches: keep ? [...others, n] : others } };
+        return { ...p, grid: { ...p.grid, paint: undefined }, building: { ...p.building, notches: keep ? [...others, n] : others } };
       });
     } else {
       const key = cellKeyAt(uv, d.ou, d.ov);
@@ -339,16 +362,25 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
                   今の底辺「{edgeLabel(grid.baseEdge)}」はごく短い辺なので、建物の向きがその辺に合ってしまい、隣の長い辺（隣地境界）と平行になりません。上の「底辺にする辺」で、平行にしたい長い辺（例: 南側や道路側の辺）を選び直してから「離れ線の角から始める」を押してください。
                 </div>
               )}
-              <div className="font-semibold">手順</div>
-              <ol className="list-decimal space-y-0.5 pl-4">
-                <li>上の「底辺にする辺」で、グリッドを直角に合わせたい辺（ふつうは道路側）を選ぶ</li>
-                <li>「離れ線の角から始める」を押す → 底辺と左の境界からそれぞれ {Math.round(setback * 1000)}mm 離れた角に1マス目が置かれ、{Math.round(unit * 1000)}mm のマス目がそこを原点に並びます</li>
-                <li>緑のマス（離れ線の内側に丸ごと入るマス）をタップ／ドラッグして建物に入れる。青が今の建物。もう一度タップで外れます。離れ線の外のマスは入りません</li>
-              </ol>
-              <div className="flex gap-1 pt-1">
-                <button className="btn-primary px-2 py-0.5" onClick={startOneCell}>離れ線の角から始める（1マス）</button>
-                <button className="btn-ghost px-2 py-0.5" onClick={autoStair}>選べるマスを全部入れる</button>
+              <div className="font-semibold">使い方：緑のマスをタップすると青（建築可能範囲）になります。もう一度タップで外れます。</div>
+              <div>
+                マス目の原点は、底辺から {Math.round(setback * 1000)}mm・左の境界から {Math.round(setback * 1000)}mm の「離れ線の角」に自動で置いています。原点をずらしたいときは下のボタンで半マスずつ動かせます（塗ったマスは消えます）。
               </div>
+              <div className="flex flex-wrap gap-1 pt-1">
+                <button className="btn-ghost px-2 py-0.5" onClick={() => setProject((p) => ({ ...p, grid: { ...p.grid, paint: undefined } }))}>原点を離れ線の角に戻す</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(-HALF, 0)}>原点 ←半マス</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(HALF, 0)}>原点 半マス→</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, HALF)}>原点 ↑半マス</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, -HALF)}>原点 ↓半マス</button>
+              </div>
+              <div className="flex flex-wrap gap-1 pt-1">
+                <button className="btn-ghost px-2 py-0.5" onClick={paintAll}>選べるマスを全部塗る</button>
+                <button className="btn-ghost px-2 py-0.5" onClick={() => resetPaint(0, 0)}>全部消す</button>
+              </div>
+              <div className="text-emerald-800">塗ったマス {paint.cells.size}（{round(paint.cells.size * unit * unit, 2)}㎡）</div>
+              {droppedCells.size > 0 && (
+                <div className="text-orange-700">橙のマス {droppedCells.size} 個は、建物の形（四角＋角の切り欠き＝階段形）で表せないため建物には入っていません。穴や途中のへこみは作れないので、つなげて塗ってください。</div>
+              )}
               {cellHint && <div className="text-red-700">{cellHint}</div>}
             </div>
           )}
@@ -440,19 +472,25 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
             <polygon data-building="1" points={footprintPolygon(building).map((q) => `${X(bu + q.x)},${Y(bv + q.y)}`).join(" ")} fill={fits ? "rgba(47,111,237,0.18)" : "rgba(220,60,60,0.2)"} stroke={fits ? "#2f6fed" : "#c0392b"} strokeWidth={2.5} strokeLinejoin="round" style={{ cursor: readOnly ? undefined : mode === "cells" ? "crosshair" : "move" }} />
             {/* マス編集モード: 枠の周り1マスまで薄く表示（クリックで追加） */}
             {!readOnly && mode === "cells" && (() => {
-              // 敷地の中のマスを全部見て、離れ線の内側に入るマスを緑（選べる）、建物に入っているマスを青で示す
-              const cells = shapeToCells(building, unit);
+              // 塗りマスの原点（離れ線の角）を基準に、離れ線の内側に入るマスを緑（選べる）、塗ったマスを青、丸めで落ちたマスを橙で示す
               const us = loc.map((p) => p.x), vs = loc.map((p) => p.y);
-              const i0 = Math.floor((Math.min(...us) - bu) / unit) - 1, i1 = Math.ceil((Math.max(...us) - bu) / unit) + 1;
-              const j0 = Math.floor((Math.min(...vs) - bv) / unit) - 1, j1 = Math.ceil((Math.max(...vs) - bv) / unit) + 1;
+              const pu = paint.u, pv = paint.v;
+              const i0 = Math.floor((Math.min(...us) - pu) / unit) - 1, i1 = Math.ceil((Math.max(...us) - pu) / unit) + 1;
+              const j0 = Math.floor((Math.min(...vs) - pv) / unit) - 1, j1 = Math.ceil((Math.max(...vs) - pv) / unit) + 1;
               const out: React.ReactNode[] = [];
               for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
-                const inside = cells.has(`${i},${j}`);
-                const ok = cellOk(i, j, bu, bv);
-                if (!inside && !ok) continue;
-                const u = bu + i * unit, v = bv + j * unit;
-                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={inside ? "rgba(47,111,237,0.10)" : "rgba(46,160,67,0.16)"} stroke={inside ? "rgba(47,111,237,0.4)" : "rgba(46,160,67,0.45)"} strokeWidth={0.6} style={{ pointerEvents: "none" }} />);
+                const key = `${i},${j}`;
+                const painted = paint.cells.has(key);
+                const ok = cellOk(i, j, pu, pv);
+                if (!painted && !ok) continue;
+                const dropped = painted && droppedCells.has(key);
+                const u = pu + i * unit, v = pv + j * unit;
+                out.push(<rect key={`c${i}_${j}`} x={Math.min(X(u), X(u + unit))} y={Math.min(Y(v), Y(v + unit))} width={unit * PX} height={unit * PX} fill={dropped ? "rgba(240,140,30,0.45)" : painted ? "rgba(47,111,237,0.45)" : "rgba(46,160,67,0.16)"} stroke={painted ? "#fff" : "rgba(46,160,67,0.45)"} strokeWidth={painted ? 1 : 0.6} style={{ pointerEvents: "none" }} />);
               }
+              // 原点の印
+              const o = { x: X(pu), y: Y(pv) };
+              out.push(<circle key="origin" cx={o.x} cy={o.y} r={5} fill="#fff" stroke="#c0392b" strokeWidth={2} style={{ pointerEvents: "none" }} />);
+              out.push(<text key="originT" x={o.x + 8} y={o.y + 14} fontSize={10} fill="#c0392b" style={{ pointerEvents: "none" }}>原点（離れ{Math.round(setback * 1000)}mmの角）</text>);
               return out;
             })()}
             {/* 辺のハンドル（ドラッグで伸縮） */}
