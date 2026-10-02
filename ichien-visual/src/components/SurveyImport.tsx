@@ -1,19 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import type { Site } from "@/lib/types";
+import type { Site, SurveyCoord, RoadEvidence } from "@/lib/types";
+import { polygonArea, dist } from "@/lib/geometry";
 import { fileToDataUrl, pdfToDataUrl, shrink } from "@/lib/imageInput";
 
-type RoadEv = { index: number; label: string; width?: number; setback?: number; neighbor: string; evidence: string; confidence: string };
-type Props = { onResult: (s: Partial<Site>) => void; onUnroad?: (index: number) => void; pointCount?: number };
+type RoadEv = RoadEvidence;
+/** site を渡すと、前回の読み取りで保存した求積表の座標・道路の根拠を表示し、辺長・面積の検算も出す */
+type Props = { onResult: (s: Partial<Site>) => void; onUnroad?: (index: number) => void; pointCount?: number; site?: Site };
 
-export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) {
+export default function SurveyImport({ onResult, onUnroad, pointCount, site }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<string[]>([]);
   const [hint, setHint] = useState("");
-  const [coords, setCoords] = useState<{ label: string; X: number; Y: number }[] | null>(null);
-  const [roadEv, setRoadEv] = useState<RoadEv[]>([]);
+  const [coordsLocal, setCoords] = useState<SurveyCoord[] | null>(null);
+  const [roadEvLocal, setRoadEv] = useState<RoadEv[] | null>(null);
+  // 読み取り直後はその結果、画面を開き直したときは物件に保存した値を見せる
+  const coords = coordsLocal ?? site?.surveyCoords ?? null;
+  const roadEv = roadEvLocal ?? site?.roadEvidence ?? [];
 
   const handle = async (files: File[]) => {
     setBusy(true);
@@ -35,7 +40,7 @@ export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) 
         body: JSON.stringify({ images: urls, hint }),
       });
       const raw = await res.text();
-      let json: { site?: Partial<Site>; coords?: unknown; notes?: string; error?: string; roadEvidence?: RoadEv[] };
+      let json: { site?: Partial<Site>; coords?: unknown; coordSystem?: string | null; notes?: string; error?: string; roadEvidence?: RoadEv[] };
       try {
         json = JSON.parse(raw);
       } catch {
@@ -43,9 +48,12 @@ export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) 
       }
       if (!res.ok) throw new Error(json.error || "読み取りに失敗しました");
       if (!json.site?.points) throw new Error("読み取り結果に境界点がありません");
-      onResult(json.site);
-      setCoords(Array.isArray(json.coords) && json.coords.length ? (json.coords as { label: string; X: number; Y: number }[]) : null);
-      setRoadEv(Array.isArray(json.roadEvidence) ? json.roadEvidence : []);
+      const coordsRead = Array.isArray(json.coords) && json.coords.length ? (json.coords as SurveyCoord[]).filter((c) => c && typeof c.X === "number" && typeof c.Y === "number") : [];
+      const evRead = Array.isArray(json.roadEvidence) ? json.roadEvidence : [];
+      // 求積表の元座標・座標系・道路の根拠も物件に保存する（辺長・面積の検算と、後で見返すため）
+      onResult({ ...json.site, surveyCoords: coordsRead.length ? coordsRead : undefined, coordSystem: typeof json.coordSystem === "string" ? json.coordSystem : undefined, roadEvidence: evRead.length ? evRead : undefined });
+      setCoords(coordsRead.length ? coordsRead : null);
+      setRoadEv(evRead);
       setMsg(`読み取りました：境界点 ${json.site.points.length} 点。${json.notes ?? ""} 数字は必ず測量図と見比べて、違う所は左の表で直してください。`);
     } catch (e) {
       setMsg("エラー: " + (e as Error).message);
@@ -91,7 +99,7 @@ export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) 
                     <div className="text-amber-800">外側: {r.neighbor || "不明"}{r.evidence ? `／根拠: ${r.evidence}` : ""}</div>
                   </div>
                   {onUnroad && (
-                    <button className="btn-ghost shrink-0 px-2 py-0.5 text-[11px]" onClick={() => { onUnroad(r.index); setRoadEv((l) => l.filter((x) => x.index !== r.index)); }}>道路ではない</button>
+                    <button className="btn-ghost shrink-0 px-2 py-0.5 text-[11px]" onClick={() => { onUnroad(r.index); setRoadEv(roadEv.filter((x) => x.index !== r.index)); }}>道路ではない</button>
                   )}
                 </li>
               );
@@ -100,25 +108,39 @@ export default function SurveyImport({ onResult, onUnroad, pointCount }: Props) 
           <div className="mt-1 text-amber-800">道路でない辺があれば「道路ではない」を押してください。道路がまだ足りなければ、下の「辺ごとの道路・後退」でチェックできます。</div>
         </div>
       )}
-      {coords && (
-        <details className="text-xs" open>
-          <summary className="cursor-pointer text-slate-600">求積表の座標と、そこから計算した辺の長さ</summary>
-          <table className="mt-1 w-full text-[11px]">
-            <thead><tr className="text-slate-500"><th className="text-left">点</th><th className="text-right">X(南北)</th><th className="text-right">Y(東西)</th><th className="text-right">次の点まで</th></tr></thead>
-            <tbody>
-              {coords.map((c, i) => {
-                const n = coords[(i + 1) % coords.length];
-                const len = Math.hypot(n.X - c.X, n.Y - c.Y);
-                return (
-                  <tr key={c.label + i} className="border-t border-slate-100">
-                    <td>{c.label}</td><td className="text-right">{c.X.toFixed(3)}</td><td className="text-right">{c.Y.toFixed(3)}</td><td className="text-right font-medium">{len.toFixed(3)} m</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </details>
-      )}
+      {coords && coords.length > 0 && (() => {
+        // 検算: 求積表の座標から辺長（隣の点まで）と面積（座標法）を出し、保存している辺長・地積と比べる
+        const n = coords.length;
+        const edgeLens = coords.map((c, i) => { const q = coords[(i + 1) % n]; return Math.hypot(q.X - c.X, q.Y - c.Y); });
+        const areaCoords = polygonArea(coords.map((c) => ({ x: c.Y, y: c.X })));
+        const samePoints = !!site && site.points.length === n;
+        const savedLen = (i: number) => (samePoints && site ? site.edges.find((e) => e.index === i)?.length ?? dist(site.points[i], site.points[(i + 1) % n]) : undefined);
+        const areaSaved = site?.areaOverride;
+        const bad = (a: number, b: number | undefined, tol: number) => b !== undefined && Math.abs(a - b) > tol;
+        return (
+          <details className="text-xs" open>
+            <summary className="cursor-pointer text-slate-600">求積表の座標と検算（辺長・面積）{site?.coordSystem ? `　座標系: ${site.coordSystem}` : ""}</summary>
+            <table className="mt-1 w-full text-[11px]">
+              <thead><tr className="text-slate-500"><th className="text-left">点</th><th className="text-right">X(南北)</th><th className="text-right">Y(東西)</th><th className="text-right">次の点まで</th><th className="text-right">図の辺長</th></tr></thead>
+              <tbody>
+                {coords.map((c, i) => {
+                  const sv = savedLen(i);
+                  const ng = bad(edgeLens[i], sv, 0.02);
+                  return (
+                    <tr key={c.label + i} className={`border-t border-slate-100 ${ng ? "text-red-700" : ""}`}>
+                      <td>{c.label}</td><td className="text-right">{c.X.toFixed(3)}</td><td className="text-right">{c.Y.toFixed(3)}</td><td className="text-right font-medium">{edgeLens[i].toFixed(3)} m</td><td className="text-right">{sv !== undefined ? `${sv.toFixed(2)} m${ng ? " ≠" : ""}` : samePoints ? "－" : "点数が違う"}</td>
+                    </tr>
+                  );
+                })}
+                <tr className={`border-t border-slate-300 font-medium ${bad(areaCoords, areaSaved, 0.05) ? "text-red-700" : ""}`}>
+                  <td colSpan={3}>座標法の面積</td><td className="text-right">{areaCoords.toFixed(2)} ㎡</td><td className="text-right">{areaSaved !== undefined ? `地積 ${areaSaved.toFixed(2)} ㎡${bad(areaCoords, areaSaved, 0.05) ? " ≠" : ""}` : "地積 未入力"}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="mt-1 text-[10px] text-slate-500">赤は、座標からの計算と図に書かれた値が 2cm（面積は 0.05㎡）以上ずれている箇所です。読み取りミスか図面の表記ゆれかを測量図で確認してください。座標・根拠は物件に保存されます。</p>
+          </details>
+        );
+      })()}
       {preview.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-slate-500">送った画像を見る（{preview.length}枚）</summary>

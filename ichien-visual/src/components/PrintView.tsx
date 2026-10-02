@@ -6,7 +6,8 @@ import { TSUBO_M2 } from "@/lib/types";
 import { round, roadFaceOf, footprintArea, floorAreaOf, siteAreaOf } from "@/lib/geometry";
 import SitePlan from "./SitePlan";
 import BuildableGrid from "./BuildableGrid";
-import { AllFloorsSvg } from "./FloorPlan";
+import { AllFloorsSvg } from "./plan/PlanParts";
+import { PlanSheet } from "./plan/PlanSheet";
 import { AllElevationsSvg, elevationTitle } from "./Elevation";
 import { verdictRows, useSky, useShadow, useBoundarySky } from "./HeightCheck";
 import FixtureSchedule from "./FixtureSchedule";
@@ -92,6 +93,13 @@ export default function PrintView({ project, setProject }: Props) {
         </div>
         <div className="w-full overflow-auto [&>svg]:h-auto [&>svg]:w-full">
           <AllFloorsSvg ref={floorsRef} project={project} summary={summary} total={total} floorArea={floorArea} balconyArea={balconyArea} />
+        </div>
+      </section>
+
+      <section className="print-page card">
+        <h2 className="mb-2 text-lg font-bold">{project.name}　間取り図（A4・寸法は壁芯・家具は配置イメージ）</h2>
+        <div className="w-full overflow-auto [&>svg]:h-auto [&>svg]:w-full">
+          <PlanSheet project={project} />
         </div>
       </section>
 

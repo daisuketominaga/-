@@ -43,7 +43,16 @@ export type Site = {
   roadLevelDiff?: number;
   /** 角地の建ぺい率緩和（特定行政庁の指定。＋10%） */
   cornerLot?: boolean;
+  /** 測量図の求積表から読み取った元座標（点ラベルと X=南北・Y=東西、m）。辺長・面積の検算に使う。読み取り時に保存 */
+  surveyCoords?: SurveyCoord[];
+  /** 座標系の表記（例: 平面直角座標系 第IX系 / 任意座標系） */
+  coordSystem?: string;
+  /** AI が道路と判断した辺とその根拠（読み取り時に保存。人が確認するための記録） */
+  roadEvidence?: RoadEvidence[];
 };
+
+export type SurveyCoord = { label: string; X: number; Y: number };
+export type RoadEvidence = { index: number; label: string; width?: number; setback?: number; neighbor: string; evidence: string; confidence: string };
 
 export type HeightRules = {
   /** 用途地域（heightPresets の ZONE_PRESETS の id）。道路斜線の勾配・適用距離・北側斜線・隣地斜線を決める */
@@ -145,6 +154,10 @@ export type Building = {
   roofDrop?: Partial<Record<"N" | "S" | "E" | "W", number>>;
   /** 角の切り欠き（L字形など）。無ければ矩形 */
   notches?: Notch[];
+  /** 外壁の厚さ m（図の見え方だけに使う。未設定は walls.ts の既定値＝仮置き。部屋の座標は壁芯） */
+  wallExt?: number;
+  /** 内壁の厚さ m（同上） */
+  wallInt?: number;
   wallColor: string;
   accentColor: string;
   wallLabel: string;
@@ -251,7 +264,12 @@ export type Room = {
   y: number;
   w: number;
   d: number;
+  /** 家具（配置イメージ）。未設定なら furniture.ts の自動配置で描く。「家具を保存」で自動配置の結果がここに入る */
+  furniture?: FurnitureItem[];
 };
+
+/** 家具 1 点。建物座標（m）、kind は furniture.ts の部品表のキー。rot は時計回りの度（0/90/180/270） */
+export type FurnitureItem = { id: string; kind: string; x: number; y: number; rot: 0 | 90 | 180 | 270 };
 
 export type Floor = {
   level: number;
