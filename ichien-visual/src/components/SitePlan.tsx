@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { Project, Pt, Site, SiteEdge } from "@/lib/types";
 import { TSUBO_M2 } from "@/lib/types";
 import { polygonArea, centroid, bbox, insetPolygon, dist, round, northScreenDeg, effectiveSite, setbackStripArea, siteAreaOf } from "@/lib/geometry";
-import { downloadSvgAsPng } from "@/lib/store";
+import { downloadSvgAsJpeg } from "@/lib/store";
 import SurveyImport from "./SurveyImport";
 
 type Props = {
@@ -280,7 +280,7 @@ export default function SitePlan({ project, setProject, readOnly }: Props) {
             {hasSetback && <span className="ml-2 text-red-700">道路後退 −{round(strip, 2)} m² → 有効 {round(effArea, 2)} m²（{round(effArea / TSUBO_M2, 2)}坪）</span>}
           </div>
           <div className="flex gap-2">
-            <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_敷地図.png`)}>PNG保存</button>
+            <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsJpeg(svgRef.current, `${project.name}_敷地図.jpg`)}>JPEG保存</button>
             <button
               className="btn-ghost"
               onClick={() => {

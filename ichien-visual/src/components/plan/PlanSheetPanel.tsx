@@ -2,12 +2,12 @@
 
 import { useMemo, useRef, useState } from "react";
 import type { Project } from "@/lib/types";
-import { downloadSvgAsPng, downloadText } from "@/lib/store";
+import { downloadSvgAsJpeg, downloadText } from "@/lib/store";
 import { planSheetLayout } from "@/lib/planSheet";
 import { checkFurniture, FURNITURE } from "@/lib/furniture";
 import { PlanSheet } from "./PlanSheet";
 
-/** 図面出力: 全階を A4 横 1 枚に並べ、PNG・SVG・印刷（PDF）で出す */
+/** 図面出力: 全階を A4 横 1 枚に並べ、JPEG・SVG・印刷（PDF）で出す。成果物は JPEG が標準 */
 export default function PlanSheetPanel({ project }: { project: Project }) {
   const ref = useRef<SVGSVGElement>(null);
   const [furniture, setFurniture] = useState(true);
@@ -31,7 +31,7 @@ export default function PlanSheetPanel({ project }: { project: Project }) {
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <label className="flex items-center gap-1"><input type="checkbox" checked={furniture} onChange={(e) => setFurniture(e.target.checked)} />家具（配置イメージ）を描く</label>
         <span className="flex-1" />
-        <button className="btn-ghost" onClick={() => ref.current && downloadSvgAsPng(ref.current, `${project.name}_間取り図.png`, 3)}>PNG</button>
+        <button className="btn-ghost" onClick={() => ref.current && downloadSvgAsJpeg(ref.current, `${project.name}_間取り図.jpg`, 3)}>JPEG</button>
         <button className="btn-ghost" onClick={() => ref.current && downloadText(`${project.name}_間取り図.svg`, new XMLSerializer().serializeToString(ref.current), "image/svg+xml")}>SVG</button>
         <button className="btn-primary" onClick={print}>印刷／PDFに保存</button>
       </div>

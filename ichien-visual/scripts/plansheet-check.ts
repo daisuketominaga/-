@@ -6,7 +6,7 @@
 //   2. シートの各階タイトルの床面積が floorAreaOf（画面と同じ関数）と一致する
 //   3. 部屋の帖数（w×d÷1.6562㎡）がシートに同じ文字で入っている
 //   4. 定型注記 3 つが入っている
-//   5. SVG を書き出し、Chromium があれば PNG にも描く（目視確認用）
+//   5. SVG を書き出し、Chromium があれば画像（JPEG。ImageMagick が無ければ PNG）にも描く（目視確認用）
 // 本藤沢1丁目の JSON が手に入ったら、環境変数 PLAN_JSON=path で読み込んで同じ検査にかける。
 import fs from "node:fs";
 import path from "node:path";
@@ -77,7 +77,14 @@ for (const p of projects) {
       const html = `<!doctype html><html><body style="margin:0">${svg.replace(/^<\?xml[^>]*>\n?/, "")}</body></html>`;
       fs.writeFileSync(base + ".html", html);
       execFileSync(chrome, ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", `--screenshot=${base}.png`, "--window-size=1123,794", "file://" + base + ".html"], { stdio: "ignore", timeout: 60000 });
-      console.log(`  → ${base}.png`);
+      // 成果物は JPEG にそろえる（ImageMagick があれば変換して PNG は消す。無ければ PNG のまま）
+      try {
+        execFileSync("convert", [base + ".png", "-background", "white", "-flatten", "-quality", "92", base + ".jpg"], { stdio: "ignore", timeout: 60000 });
+        fs.unlinkSync(base + ".png");
+        console.log(`  → ${base}.jpg`);
+      } catch {
+        console.log(`  → ${base}.png（ImageMagick が無いので JPEG 変換は省略）`);
+      }
     } catch (e) {
       console.log(`  (PNG 化は失敗: ${(e as Error).message.slice(0, 80)})`);
     }

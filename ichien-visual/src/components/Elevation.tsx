@@ -5,7 +5,7 @@ import type { Project, Face, Opening, Building } from "@/lib/types";
 import { heightLimits, levels, elevationSilhouette } from "@/lib/heightLimits";
 import HeightCheck from "./HeightCheck";
 import { faceLength, roofRise, round, faceCompass, roadFaceOf, notchesOf } from "@/lib/geometry";
-import { downloadSvgAsPng, uid } from "@/lib/store";
+import { downloadSvgAsJpeg, uid } from "@/lib/store";
 import { derivedOpenings } from "@/lib/openings";
 
 type Props = {
@@ -160,7 +160,7 @@ export default function Elevation({ project, setProject }: Props) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-slate-600"><b>{project.name}</b> 立面図</div>
           <div className="flex gap-2">
-            <button className="btn-ghost" onClick={() => allRef.current && downloadSvgAsPng(allRef.current, `${project.name}_立面図4面.png`, 2)}>4面まとめてPNG</button>
+            <button className="btn-ghost" onClick={() => allRef.current && downloadSvgAsJpeg(allRef.current, `${project.name}_立面図4面.jpg`, 2)}>4面まとめてJPEG</button>
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -168,7 +168,7 @@ export default function Elevation({ project, setProject }: Props) {
             <div key={f} className={`card p-2 ${editFace === f ? "ring-2 ring-brand-100" : ""}`} onClick={() => setEditFace(f)}>
               <div className="mb-1 flex items-center justify-between text-xs">
                 <b>{faceTitle(project, f)}{roadFace === f ? "（道路側）" : ""}</b>
-                <button className="text-slate-400 hover:text-slate-700" onClick={(e) => { e.stopPropagation(); const s = faceRefs.current[f]; if (s) downloadSvgAsPng(s, `${project.name}_${faceTitle(project, f)}.png`); }}>PNG</button>
+                <button className="text-slate-400 hover:text-slate-700" onClick={(e) => { e.stopPropagation(); const s = faceRefs.current[f]; if (s) downloadSvgAsJpeg(s, `${project.name}_${faceTitle(project, f)}.jpg`); }}>JPEG</button>
               </div>
               <ElevationSvg ref={(el) => { faceRefs.current[f] = el; }} project={project} face={f} sel={sel} onSelect={setSel} />
             </div>

@@ -5,7 +5,7 @@ import type { GridSetting, Notch, Project, Pt } from "@/lib/types";
 import { HALF, MODULE, TSUBO_M2 } from "@/lib/types";
 import { insetPolygon, round, northScreenDeg, footprintArea, notchesOf, footprintPolygon, siteAreaOf, effectiveSite, setbackEdges, setbackStripArea, pointInPolygon, insideFootprint } from "@/lib/geometry";
 import { baseFrame, toLocal, toWorld, buildingFromGrid, maxRect, footprintFits, maxStair, modules, clearancesMin, roadBands, cellsToShape } from "@/lib/grid";
-import { downloadSvgAsPng } from "@/lib/store";
+import { downloadSvgAsJpeg } from "@/lib/store";
 
 type Props = {
   project: Project;
@@ -596,7 +596,7 @@ export default function BuildableGrid({ project, setProject, readOnly }: Props) 
       <section className="space-y-2">
         <div className={`flex flex-wrap items-center justify-between gap-2 ${readOnly ? "print-hide" : ""}`}>
           <div className="text-sm text-slate-600"><b>{project.name}</b> 建築可能範囲（910mmグリッド）</div>
-          <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_建築可能範囲.png`)}>PNG保存</button>
+          <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsJpeg(svgRef.current, `${project.name}_建築可能範囲.jpg`)}>JPEG保存</button>
         </div>
         <div className="card overflow-auto p-2">
           <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className={`mx-auto max-h-[78vh] w-full select-none ${!readOnly && mode === "cells" ? "cursor-crosshair" : ""}`} style={{ background: "#fff", fontFamily: "'Hiragino Sans','Noto Sans JP',sans-serif", touchAction: readOnly ? undefined : "none" }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>

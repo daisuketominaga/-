@@ -5,7 +5,7 @@ import type { Building, Project, Room, RoomType, Floor, StairDir, StairKind, Tur
 import { roomGroups, groupOutline, mergeWithNeighbors, touchLength } from "@/lib/roomGroups";
 import { ROOM_FILL, ROOM_LABEL, ROOM_DEFAULT_SIZE, FIXTURE_LABEL, FIXTURE_DEFAULT_WIDTH, TATAMI_M2, TSUBO_M2, HALF, MODULE } from "@/lib/types";
 import { round, northScreenDeg, footprintArea, footprintPolygon, notchesOf, notchRect, roadFaceOf, floorAreaOf, siteAreaOf } from "@/lib/geometry";
-import { downloadSvgAsPng, uid } from "@/lib/store";
+import { downloadSvgAsJpeg, uid } from "@/lib/store";
 import { siteInBuildingFrame, clearances, type SiteContext } from "@/lib/grid";
 import FixtureSchedule from "./FixtureSchedule";
 import { wallSegments, EXTERIOR_ONLY, DOOR_KINDS, DEFAULT_WALL_EXT, DEFAULT_WALL_INT, type Wall } from "@/lib/walls";
@@ -563,8 +563,8 @@ export default function FloorPlan({ project, setProject }: Props) {
             <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={showFurniture} onChange={(e) => setShowFurniture(e.target.checked)} />家具（配置イメージ）</label>
             <button className="btn-ghost" title="自動配置した家具をこの階の部屋に保存して固定する" onClick={saveFurniture}>家具を保存</button>
             {floor.rooms.some((r) => r.furniture) && <button className="btn-ghost" onClick={clearFurniture}>家具を消す</button>}
-            <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsPng(svgRef.current, `${project.name}_${level}階.png`)}>この階をPNG</button>
-            <button className="btn-ghost" onClick={() => allRef.current && downloadSvgAsPng(allRef.current, `${project.name}_間取り一式.png`, 2)}>全階まとめてPNG</button>
+            <button className="btn-ghost" onClick={() => svgRef.current && downloadSvgAsJpeg(svgRef.current, `${project.name}_${level}階.jpg`)}>この階をJPEG</button>
+            <button className="btn-ghost" onClick={() => allRef.current && downloadSvgAsJpeg(allRef.current, `${project.name}_間取り一式.jpg`, 2)}>全階まとめてJPEG</button>
           </div>
         </div>
 
@@ -738,7 +738,7 @@ export default function FloorPlan({ project, setProject }: Props) {
         </div>
 
         <details className="card" open>
-          <summary className="cursor-pointer text-sm font-semibold">図面出力（全階を A4 横 1 枚に・PNG／印刷 PDF）</summary>
+          <summary className="cursor-pointer text-sm font-semibold">図面出力（全階を A4 横 1 枚に・JPEG／印刷 PDF）</summary>
           <div className="mt-2"><PlanSheetPanel project={project} /></div>
         </details>
 

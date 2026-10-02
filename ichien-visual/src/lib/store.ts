@@ -251,8 +251,12 @@ export function downloadText(filename: string, text: string, mime = "application
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** SVG要素をPNGとしてダウンロード */
-export async function downloadSvgAsPng(svg: SVGSVGElement, filename: string, scale = 3) {
+/**
+ * SVG 要素を画像としてダウンロード。成果物は JPEG で出す（2026-10-02 富永指示）。背景は白で塗る。
+ * type を "image/png" にすると PNG。quality は JPEG の画質（0〜1、既定 0.92）
+ */
+export async function downloadSvgAsImage(svg: SVGSVGElement, filename: string, opts: { scale?: number; type?: "image/jpeg" | "image/png"; quality?: number } = {}) {
+  const { scale = 3, type = "image/jpeg", quality = 0.92 } = opts;
   const xml = new XMLSerializer().serializeToString(svg);
   const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
@@ -273,8 +277,19 @@ export async function downloadSvgAsPng(svg: SVGSVGElement, filename: string, sca
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   URL.revokeObjectURL(url);
+  const ext = type === "image/png" ? ".png" : ".jpg";
   const a = document.createElement("a");
-  a.href = canvas.toDataURL("image/png");
-  a.download = filename;
+  a.href = canvas.toDataURL(type, quality);
+  a.download = filename.replace(/\.(png|jpe?g)$/i, "") + ext;
   a.click();
+}
+
+/** SVG 要素を JPEG としてダウンロード（成果物の標準） */
+export function downloadSvgAsJpeg(svg: SVGSVGElement, filename: string, scale = 3) {
+  return downloadSvgAsImage(svg, filename, { scale, type: "image/jpeg" });
+}
+
+/** 旧名。中身は JPEG 出力（成果物はすべて JPEG にそろえるため） */
+export function downloadSvgAsPng(svg: SVGSVGElement, filename: string, scale = 3) {
+  return downloadSvgAsImage(svg, filename, { scale, type: "image/jpeg" });
 }
